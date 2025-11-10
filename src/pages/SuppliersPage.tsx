@@ -20,15 +20,13 @@ import {
   Typography,
 } from '@mui/material'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import type { ChangeEvent, ComponentType, FormEvent } from 'react'
+import type { ChangeEvent, FormEvent } from 'react'
 import { useState } from 'react'
 import { createSupplier, listSuppliers } from '../api/suppliers'
 import { SectionHeading } from '../components/common/SectionHeading'
 import { useSearchStore } from '../stores/search-store'
 import type { CreateSupplierRequest } from '../types/suppliers'
 import { formatDateTime } from '../utils/formatters'
-
-const PaginationControl = Pagination as ComponentType<any>
 
 export const SuppliersPage = () => {
   const [page, setPage] = useState(1)
@@ -128,7 +126,7 @@ export const SuppliersPage = () => {
       </Paper>
       {totalPages > 1 && (
         <Box display="flex" justifyContent="flex-end">
-          <PaginationControl count={totalPages} page={page} onChange={handlePageChange} />
+          <Pagination count={totalPages} page={page} onChange={handlePageChange} />
         </Box>
       )}
 
