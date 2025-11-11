@@ -18,6 +18,7 @@ import { getReplenishmentSuggestions } from '../api/replenishment'
 import { StatCard } from '../components/cards/StatCard'
 import { SectionHeading } from '../components/common/SectionHeading'
 import { formatCurrency } from '../utils/formatters'
+import type { AlertsAggregate } from '../types/alerts'
 
 export const DashboardPage = () => {
   const alertsQuery = useQuery({ queryKey: ['alerts'], queryFn: getAlerts })
@@ -34,7 +35,8 @@ export const DashboardPage = () => {
     return <Alert severity="error">Unable to load alerts</Alert>
   }
 
-  const alerts = alertsQuery.data
+  const emptyAlerts: AlertsAggregate = { lowStock: [], expirySoon: [], slowMovers: [] }
+  const alerts = alertsQuery.data ?? emptyAlerts
   const replenishment = replenishmentQuery.data ?? []
 
   return (
@@ -144,7 +146,9 @@ export const DashboardPage = () => {
               </Box>
             ))}
             {replenishment.length === 0 && (
-              <Typography color="text.secondary">No replenishment suggestions right now.</Typography>
+              <Typography color="text.secondary">
+                No replenishment suggestions right now.
+              </Typography>
             )}
           </Stack>
         </CardContent>

@@ -20,7 +20,7 @@ import {
   Typography,
 } from '@mui/material'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import type { ChangeEvent, ComponentType, FormEvent } from 'react'
+import type { ChangeEvent, ComponentType, ComponentProps, FormEvent } from 'react'
 import { useState } from 'react'
 import { createSupplier, listSuppliers } from '../api/suppliers'
 import { SectionHeading } from '../components/common/SectionHeading'
@@ -28,12 +28,16 @@ import { useSearchStore } from '../stores/search-store'
 import type { CreateSupplierRequest } from '../types/suppliers'
 import { formatDateTime } from '../utils/formatters'
 
-const PaginationControl = Pagination as ComponentType<any>
+const PaginationControl = Pagination as ComponentType<ComponentProps<typeof Pagination>>
 
 export const SuppliersPage = () => {
   const [page, setPage] = useState(1)
   const [dialogOpen, setDialogOpen] = useState(false)
-  const [form, setForm] = useState<CreateSupplierRequest>({ name: '', contact: '', leadTimeDays: 0 })
+  const [form, setForm] = useState<CreateSupplierRequest>({
+    name: '',
+    contact: '',
+    leadTimeDays: 0,
+  })
   const globalQuery = useSearchStore(state => state.query)
   const queryClient = useQueryClient()
   const pageSize = 10
@@ -66,7 +70,7 @@ export const SuppliersPage = () => {
       setForm(prev => ({
         ...prev,
         [field]:
-          field === 'leadTimeDays' ? Number(event.target.value ?? 0) : event.target.value ?? '',
+          field === 'leadTimeDays' ? Number(event.target.value ?? 0) : (event.target.value ?? ''),
       }))
     }
 
@@ -80,11 +84,7 @@ export const SuppliersPage = () => {
         title="Supplier directory"
         subtitle="Manage sourcing partners and lead times."
         action={
-          <Button
-            startIcon={<AddIcon />}
-            variant="contained"
-            onClick={() => setDialogOpen(true)}
-          >
+          <Button startIcon={<AddIcon />} variant="contained" onClick={() => setDialogOpen(true)}>
             New supplier
           </Button>
         }

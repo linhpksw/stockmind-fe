@@ -9,6 +9,7 @@ const LoginPage = lazy(() => import('./pages/LoginPage'))
 const DashboardPage = lazy(() => import('./pages/DashboardPage'))
 const InventoryPage = lazy(() => import('./pages/InventoryPage'))
 const SuppliersPage = lazy(() => import('./pages/SuppliersPage'))
+const ProductManagementPage = lazy(() => import('./pages/ProductManagementPage'))
 const PurchaseOrdersPage = lazy(() => import('./pages/PurchaseOrdersPage'))
 const ReceivingPage = lazy(() => import('./pages/ReceivingPage'))
 const MarkdownsPage = lazy(() => import('./pages/MarkdownsPage'))
@@ -45,6 +46,7 @@ const App = () => (
         >
           <Route index element={<DashboardPage />} />
           <Route path="inventory" element={<InventoryPage />} />
+          <Route path="products" element={<ProductManagementPage />} />
           <Route path="suppliers" element={<SuppliersPage />} />
           <Route path="purchase-orders" element={<PurchaseOrdersPage />} />
           <Route path="receiving" element={<ReceivingPage />} />
