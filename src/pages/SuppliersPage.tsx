@@ -28,10 +28,17 @@ import { useSearchStore } from '../stores/search-store'
 import type { CreateSupplierRequest } from '../types/suppliers'
 import { formatDateTime } from '../utils/formatters'
 
+// Use Pagination directly; explicit aliasing caused an unused-variable linting error in some CI setups.
+// The component's props are inferred by TypeScript when used in JSX.
+
 export const SuppliersPage = () => {
   const [page, setPage] = useState(1)
   const [dialogOpen, setDialogOpen] = useState(false)
-  const [form, setForm] = useState<CreateSupplierRequest>({ name: '', contact: '', leadTimeDays: 0 })
+  const [form, setForm] = useState<CreateSupplierRequest>({
+    name: '',
+    contact: '',
+    leadTimeDays: 0,
+  })
   const globalQuery = useSearchStore(state => state.query)
   const queryClient = useQueryClient()
   const pageSize = 10
@@ -64,7 +71,7 @@ export const SuppliersPage = () => {
       setForm(prev => ({
         ...prev,
         [field]:
-          field === 'leadTimeDays' ? Number(event.target.value ?? 0) : event.target.value ?? '',
+          field === 'leadTimeDays' ? Number(event.target.value ?? 0) : (event.target.value ?? ''),
       }))
     }
 
@@ -78,11 +85,7 @@ export const SuppliersPage = () => {
         title="Supplier directory"
         subtitle="Manage sourcing partners and lead times."
         action={
-          <Button
-            startIcon={<AddIcon />}
-            variant="contained"
-            onClick={() => setDialogOpen(true)}
-          >
+          <Button startIcon={<AddIcon />} variant="contained" onClick={() => setDialogOpen(true)}>
             New supplier
           </Button>
         }
