@@ -29,7 +29,10 @@ import { exportRowsToXlsx, parseFirstSheet } from '../lib/xlsx'
 import type { CategoryImportRow, CategoryNode } from '../types/categories'
 
 export const CategoriesPage = () => {
-  const EXCLUDED_NAMES = useMemo(() => new Set(['Giá Siêu Rẻ', 'Ưu Đãi Hội Viên']), [])
+  const EXCLUDED_NAMES = useMemo(
+    () => new Set(['giá siêu rẻ', 'giá hội viên', 'ưu đãi hội viên']),
+    [],
+  )
 
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const queryClient = useQueryClient()
@@ -73,7 +76,7 @@ export const CategoriesPage = () => {
 
     const pruneNodes = (nodes: CategoryNode[]): CategoryNode[] =>
       nodes
-        .filter(node => !EXCLUDED_NAMES.has(node.name))
+        .filter(node => !EXCLUDED_NAMES.has(node.name.toLocaleLowerCase('vi-VN')))
         .map(node => ({
           ...node,
           children: pruneNodes(node.children ?? []),

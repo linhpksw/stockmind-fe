@@ -27,7 +27,6 @@ interface ProductFormState {
   uom: string
   price: number
   minStock: number
-  leadTimeDays: number
   supplierId: string
 }
 
@@ -44,7 +43,6 @@ const defaultForm: ProductFormState = {
   uom: '',
   price: 0,
   minStock: 0,
-  leadTimeDays: 0,
   supplierId: '',
 }
 
@@ -57,7 +55,6 @@ const normalizePayload = (form: ProductFormState): ProductRequest => ({
   uom: form.uom.trim(),
   price: form.price,
   minStock: form.minStock,
-  leadTimeDays: form.leadTimeDays,
   supplierId: form.supplierId.trim() || undefined,
 })
 
@@ -100,7 +97,6 @@ export const ProductsPage = () => {
         uom: product.uom,
         price: product.price,
         minStock: product.minStock,
-        leadTimeDays: product.leadTimeDays,
         supplierId: product.supplierId ?? '',
       })
     },
@@ -298,17 +294,6 @@ export const ProductsPage = () => {
                         fullWidth
                       />
                     </Grid>
-                    <Grid item xs={12} sm={4}>
-                      <TextField
-                        label="Lead time (days)"
-                        type="number"
-                        value={createForm.leadTimeDays}
-                        onChange={handleCreateChange('leadTimeDays')}
-                        required
-                        fullWidth
-                        inputProps={{ min: 0, step: 0.01 }}
-                      />
-                    </Grid>
                   </Grid>
                   {createMutation.isError && (
                     <Alert severity="error">{renderMutationError(createMutation.error)}</Alert>
@@ -441,17 +426,6 @@ export const ProductsPage = () => {
                         type="number"
                         value={updateForm.minStock}
                         onChange={handleUpdateChange('minStock')}
-                        required
-                        fullWidth
-                        inputProps={{ min: 0, step: 1 }}
-                      />
-                    </Grid>
-                    <Grid item xs={12} sm={4}>
-                      <TextField
-                        label="Lead time (days)"
-                        type="number"
-                        value={updateForm.leadTimeDays}
-                        onChange={handleUpdateChange('leadTimeDays')}
                         required
                         fullWidth
                         inputProps={{ min: 0, step: 1 }}

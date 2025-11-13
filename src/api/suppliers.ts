@@ -1,10 +1,14 @@
 import { apiClient } from './client'
 import type {
   CreateSupplierRequest,
+  ImportSuppliersRequest,
+  ImportSuppliersResponse,
   Supplier,
   SupplierResponse,
   SuppliersPageResponse,
+  UpdateSupplierRequest,
 } from '../types/suppliers'
+import type { ApiResponse } from '../types/common'
 import { unwrap, unwrapPage } from './helpers'
 
 interface ListParams {
@@ -53,5 +57,23 @@ export const fetchAllSuppliers = async (query?: string): Promise<Supplier[]> => 
 
 export const createSupplier = async (payload: CreateSupplierRequest): Promise<Supplier> => {
   const { data } = await apiClient.post<SupplierResponse>('/api/suppliers', payload)
+  return unwrap(data)
+}
+
+export const updateSupplier = async (
+  id: string,
+  payload: UpdateSupplierRequest,
+): Promise<Supplier> => {
+  const { data } = await apiClient.patch<SupplierResponse>(`/api/suppliers/${id}`, payload)
+  return unwrap(data)
+}
+
+export const importSuppliers = async (
+  payload: ImportSuppliersRequest,
+): Promise<ImportSuppliersResponse> => {
+  const { data } = await apiClient.post<ApiResponse<ImportSuppliersResponse>>(
+    '/api/suppliers/import',
+    payload,
+  )
   return unwrap(data)
 }

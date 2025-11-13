@@ -11,7 +11,6 @@ export interface Product {
   uom: string
   price: number
   minStock: number
-  leadTimeDays: number
   supplierId?: string | null
   brandName?: string | null
   mediaUrl?: string | null
@@ -29,7 +28,6 @@ export interface ProductRequest {
   uom: string
   price: number
   minStock: number
-  leadTimeDays: number
   supplierId?: string
   mediaUrl?: string
 }
@@ -48,7 +46,6 @@ export interface ProductImportRow {
   isPerishable?: boolean | null
   shelfLifeDays?: number | null
   minStock?: number | null
-  leadTimeDays?: number | null
 }
 
 export interface ImportProductsRequest {
