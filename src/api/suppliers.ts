@@ -13,6 +13,8 @@ interface ListParams {
   query?: string
 }
 
+const DIRECTORY_PAGE_SIZE = 100
+
 export const listSuppliers = async (params: ListParams): Promise<SuppliersPageResponse> => {
   const { data } = await apiClient.get<SuppliersPageResponse>('/api/suppliers', {
     params: {
@@ -22,6 +24,31 @@ export const listSuppliers = async (params: ListParams): Promise<SuppliersPageRe
     },
   })
   return unwrapPage(data)
+}
+
+export const fetchAllSuppliers = async (query?: string): Promise<Supplier[]> => {
+  const aggregated: Supplier[] = []
+  let pageNum = 1
+  let total = Number.POSITIVE_INFINITY
+
+  while (aggregated.length < total) {
+    const page = await listSuppliers({
+      pageNum,
+      pageSize: DIRECTORY_PAGE_SIZE,
+      query,
+    })
+
+    aggregated.push(...page.data)
+    total = page.total
+
+    if (page.data.length === 0 || aggregated.length >= total) {
+      break
+    }
+
+    pageNum += 1
+  }
+
+  return aggregated
 }
 
 export const createSupplier = async (payload: CreateSupplierRequest): Promise<Supplier> => {

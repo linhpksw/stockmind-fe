@@ -1,6 +1,12 @@
 import { apiClient } from './client'
 import { unwrap } from './helpers'
-import type { Product, ProductRequest, ProductResponse } from '../types/products'
+import type {
+  ImportProductsRequest,
+  ImportProductsResponse,
+  Product,
+  ProductRequest,
+  ProductResponse,
+} from '../types/products'
 import type { ApiResponse } from '../types/common'
 
 export const createProduct = async (payload: ProductRequest): Promise<Product> => {
@@ -20,5 +26,15 @@ export const getProductById = async (id: string): Promise<Product> => {
 
 export const listProducts = async (): Promise<Product[]> => {
   const { data } = await apiClient.get<ApiResponse<Product[]>>('/api/products')
+  return unwrap(data)
+}
+
+export const importProducts = async (
+  payload: ImportProductsRequest,
+): Promise<ImportProductsResponse> => {
+  const { data } = await apiClient.post<ApiResponse<ImportProductsResponse>>(
+    '/api/products/import',
+    payload,
+  )
   return unwrap(data)
 }
