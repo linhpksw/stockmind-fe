@@ -26,8 +26,9 @@ import { SIDEBAR_WIDTH } from '../../constants/layout'
 const NAV_ITEMS = [
   { label: 'Dashboard', path: '/app', icon: <Dashboard fontSize="small" /> },
   { label: 'Inventory', path: '/app/inventory', icon: <Warehouse fontSize="small" /> },
-  { label: 'Products', path: '/app/products', icon: <Category fontSize="small" /> },
+  { label: 'Products', path: '/app/products', icon: <Inventory2 fontSize="small" /> },
   { label: 'Suppliers', path: '/app/suppliers', icon: <LocalShipping fontSize="small" /> },
+  { label: 'Categories', path: '/app/categories', icon: <Category fontSize="small" /> },
   {
     label: 'Purchase Orders',
     path: '/app/purchase-orders',
