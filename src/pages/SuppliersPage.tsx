@@ -9,18 +9,19 @@ import {
   Box,
   Button,
   Chip,
-  CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
   Grid,
   Paper,
+  Skeleton,
   Table,
   TableBody,
   TableCell,
   TableContainer,
   TableHead,
+  TablePagination,
   TableRow,
   Stack,
   TextField,
@@ -90,6 +91,8 @@ export const SuppliersPage = () => {
     contact: '',
     leadTimeDays: 0,
   })
+  const [page, setPage] = useState(0)
+  const [rowsPerPage, setRowsPerPage] = useState(10)
   const [selectedProducts, setSelectedProducts] = useState<Product[]>([])
   const [parentCategoryFilter, setParentCategoryFilter] = useState<ParentCategoryOption[]>([])
   const [childCategoryFilter, setChildCategoryFilter] = useState<CategoryOption[]>([])
@@ -339,6 +342,12 @@ export const SuppliersPage = () => {
     getCategoryInfo,
   ])
 
+  const totalFilteredSuppliers = filteredSuppliers.length
+  const paginatedSuppliers = useMemo(() => {
+    const start = page * rowsPerPage
+    return filteredSuppliers.slice(start, start + rowsPerPage)
+  }, [filteredSuppliers, page, rowsPerPage])
+
   const resetImportInput = () => {
     if (fileInputRef.current) {
       fileInputRef.current.value = ''
@@ -355,6 +364,16 @@ export const SuppliersPage = () => {
       return next.length === prev.length ? prev : next
     })
   }, [parentCategoryFilter, derivedChildCategoryOptions])
+
+  useEffect(() => {
+    setPage(0)
+  }, [globalQuery, parentCategoryFilter, childCategoryFilter, selectedProducts])
+
+  useEffect(() => {
+    if (page * rowsPerPage >= Math.max(totalFilteredSuppliers, 1) && page !== 0) {
+      setPage(0)
+    }
+  }, [page, rowsPerPage, totalFilteredSuppliers])
 
   const handleExportSuppliers = () => {
     if (sortedSuppliers.length === 0) {
@@ -519,6 +538,15 @@ export const SuppliersPage = () => {
     setChildCategoryFilter([])
   }
 
+  const handleChangePage = (_event: unknown, newPage: number) => {
+    setPage(newPage)
+  }
+
+  const handleChangeRowsPerPage = (event: ChangeEvent<HTMLInputElement>) => {
+    setRowsPerPage(parseInt(event.target.value, 10))
+    setPage(0)
+  }
+
   const supplierCountLabel =
     suppliersQuery.isLoading || productsQuery.isLoading
       ? 'Loading suppliers...'
@@ -681,12 +709,14 @@ export const SuppliersPage = () => {
           </TableHead>
           <TableBody>
             {suppliersQuery.isLoading || productsQuery.isLoading ? (
-              <TableRow>
-                <TableCell colSpan={6} align="center">
-                  <CircularProgress size={24} />
-                </TableCell>
-              </TableRow>
-            ) : filteredSuppliers.length === 0 ? (
+              Array.from({ length: rowsPerPage }).map((_, skeletonIndex) => (
+                <TableRow key={`supplier-skeleton-${skeletonIndex}`}>
+                  <TableCell colSpan={6}>
+                    <Skeleton variant="rectangular" height={48} animation="wave" />
+                  </TableCell>
+                </TableRow>
+              ))
+            ) : totalFilteredSuppliers === 0 ? (
               <TableRow>
                 <TableCell colSpan={6}>
                   <Box py={4} textAlign="center">
@@ -698,7 +728,7 @@ export const SuppliersPage = () => {
                 </TableCell>
               </TableRow>
             ) : (
-              filteredSuppliers.map((supplier, index) => {
+              paginatedSuppliers.map((supplier, index) => {
                 const supplierProducts = supplierProductsMap.get(supplier.id) ?? []
                 const categoryBadges = Array.from(
                   new Map(
@@ -714,7 +744,7 @@ export const SuppliersPage = () => {
                 return (
                   <TableRow hover key={supplier.id}>
                     <TableCell>
-                      <Typography fontWeight={600}>{index + 1}</Typography>
+                      <Typography fontWeight={600}>{page * rowsPerPage + index + 1}</Typography>
                     </TableCell>
                     <TableCell>
                       <Stack spacing={0.5}>
@@ -769,6 +799,15 @@ export const SuppliersPage = () => {
           </TableBody>
         </Table>
       </TableContainer>
+      <TablePagination
+        component="div"
+        count={totalFilteredSuppliers}
+        page={page}
+        onPageChange={handleChangePage}
+        rowsPerPage={rowsPerPage}
+        onRowsPerPageChange={handleChangeRowsPerPage}
+        rowsPerPageOptions={[10, 25, 50]}
+      />
 
       <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} fullWidth maxWidth="sm">
         <Box component="form" onSubmit={handleCreateSupplier}>
