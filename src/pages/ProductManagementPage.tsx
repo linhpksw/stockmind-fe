@@ -669,8 +669,59 @@ export const ProductManagementPage = () => {
   }
 
   const parseNumeric = (value: unknown): number | undefined => {
+    if (value == null) {
+      return undefined
+    }
+    if (typeof value === 'string' && value.trim() === '') {
+      return undefined
+    }
     const numeric = Number(value)
     return Number.isFinite(numeric) ? numeric : undefined
+  }
+
+  const parseInteger = (value: unknown): number | undefined => {
+    if (value == null) {
+      return undefined
+    }
+    if (typeof value === 'string' && value.trim() === '') {
+      return undefined
+    }
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return Math.trunc(value)
+    }
+    const parsed = Number(String(value).trim())
+    return Number.isFinite(parsed) ? Math.trunc(parsed) : undefined
+  }
+
+  const parseBoolean = (value: unknown): boolean | undefined => {
+    if (typeof value === 'boolean') {
+      return value
+    }
+    if (value == null) {
+      return undefined
+    }
+    const normalized = String(value).trim().toLowerCase()
+    if (!normalized) {
+      return undefined
+    }
+    if (['true', '1', 'yes', 'y', 'perishable'].includes(normalized)) {
+      return true
+    }
+    if (
+      [
+        'false',
+        '0',
+        'no',
+        'n',
+        'ambient',
+        'non-perishable',
+        'nonperishable',
+        'shelf-stable',
+      ].includes(normalized)
+    ) {
+      return false
+    }
+    return undefined
   }
 
   const buildImportPayload = (rawRows: Record<string, unknown>[]): ProductImportRow[] => {
@@ -699,8 +750,26 @@ export const ProductManagementPage = () => {
         row['category_name'] ?? row['Category Name'] ?? row['category'],
       )
       const brandName = normalizeString(row['brand_name'] ?? row['Brand Name'] ?? row['brand'])
+      const isPerishable = parseBoolean(
+        row['is_perishable'] ?? row['Is Perishable'] ?? row['perishable'] ?? row['Perishable'],
+      )
+      const shelfLifeDays = parseInteger(
+        row['shelf_life_days'] ??
+          row['Shelf Life Days'] ??
+          row['shelf_life'] ??
+          row['Shelf Life'] ??
+          row['shelf_life_day'] ??
+          row['Shelf Life Day'],
+      )
+      const minStock = parseInteger(
+        row['min_stock'] ??
+          row['Min Stock'] ??
+          row['minimum_stock'] ??
+          row['Minimum Stock'] ??
+          row['minStock'],
+      )
 
-      payload.push({
+      const payloadRow: ProductImportRow = {
         productId: productId || undefined,
         skuCode,
         name,
@@ -709,7 +778,19 @@ export const ProductManagementPage = () => {
         mediaUrl: mediaUrl || undefined,
         categoryName: categoryName || undefined,
         brandName: brandName || undefined,
-      })
+      }
+
+      if (isPerishable !== undefined) {
+        payloadRow.isPerishable = isPerishable
+      }
+      if (shelfLifeDays !== undefined) {
+        payloadRow.shelfLifeDays = shelfLifeDays
+      }
+      if (minStock !== undefined) {
+        payloadRow.minStock = minStock
+      }
+
+      payload.push(payloadRow)
     })
     return payload
   }
@@ -756,8 +837,11 @@ export const ProductManagementPage = () => {
       uom: product.uom,
       price: product.price,
       media_url: product.mediaUrl ?? '',
-      category_name: getCategoryLabel(product),
-      brand_name: getBrandLabel(product) ?? '',
+      category_name: product.categoryName ?? '',
+      brand_name: product.brandName ?? '',
+      is_perishable: product.isPerishable ? 'TRUE' : 'FALSE',
+      shelf_life_days: product.shelfLifeDays ?? '',
+      min_stock: product.minStock,
     }))
     const today = new Date().toISOString().split('T')[0]
     exportRowsToXlsx(rows, `products-${today}.xlsx`, 'Products')
@@ -790,6 +874,13 @@ export const ProductManagementPage = () => {
   }
 
   const detailProductLeadTime = detailProduct ? getSupplierLeadTime(detailProduct) : null
+  const detailShelfLifeDisplay = detailProduct
+    ? detailProduct.shelfLifeDays != null
+      ? `${detailProduct.shelfLifeDays} day${detailProduct.shelfLifeDays === 1 ? '' : 's'}`
+      : detailProduct.isPerishable
+        ? 'Missing'
+        : 'Not applicable'
+    : '—'
 
   return (
     <Stack spacing={3}>
@@ -806,7 +897,16 @@ export const ProductManagementPage = () => {
                 Format: <strong>product_id</strong>, <strong>sku_code</strong>,{' '}
                 <strong>name</strong>, <strong>uom</strong>, <strong>price</strong>,{' '}
                 <strong>media_url</strong>, <strong>category_name</strong>,{' '}
-                <strong>brand_name</strong>.
+                <strong>brand_name</strong>, <strong>is_perishable</strong>,{' '}
+                <strong>shelf_life_days</strong>, <strong>min_stock</strong>.
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                Category and brand names must already exist in their modules. Rows that do not match
+                are skipped during import.
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                Use TRUE/FALSE for <strong>is_perishable</strong>. Shelf life and min stock update
+                only when their columns are provided.
               </Typography>
             </Stack>
             <Stack direction={{ xs: 'column', md: 'row' }} spacing={1} alignItems="flex-end">
@@ -1392,7 +1492,34 @@ export const ProductManagementPage = () => {
       <Dialog open={!!detailProduct} onClose={closeDetailDialog} maxWidth="md" fullWidth>
         {detailProduct && (
           <>
-            <DialogTitle>{detailProduct.name}</DialogTitle>
+            <DialogTitle>
+              <Stack
+                direction={{ xs: 'column', sm: 'row' }}
+                spacing={1}
+                justifyContent="space-between"
+                alignItems={{ xs: 'flex-start', sm: 'center' }}
+              >
+                <Typography variant="h6" component="span">
+                  {detailProduct.name}
+                </Typography>
+                <Chip
+                  label={detailProduct.isPerishable ? 'Perishable item' : 'Shelf-stable'}
+                  variant="filled"
+                  size="small"
+                  sx={theme => ({
+                    fontWeight: 600,
+                    textTransform: 'uppercase',
+                    letterSpacing: 0.5,
+                    bgcolor: detailProduct.isPerishable
+                      ? theme.palette.warning.main
+                      : theme.palette.grey[300],
+                    color: detailProduct.isPerishable
+                      ? theme.palette.warning.contrastText
+                      : theme.palette.text.primary,
+                  })}
+                />
+              </Stack>
+            </DialogTitle>
             <DialogContent dividers>
               <Grid container spacing={3}>
                 <Grid item xs={12} md={4}>
@@ -1422,11 +1549,6 @@ export const ProductManagementPage = () => {
                   </Box>
                   <Stack spacing={1} mt={2}>
                     <Chip label={getBrandLabel(detailProduct)} size="small" />
-                    <Chip
-                      label={detailProduct.isPerishable ? 'Perishable' : 'Ambient'}
-                      size="small"
-                      color={detailProduct.isPerishable ? 'warning' : 'default'}
-                    />
                     {detailProduct.mediaUrl && (
                       <Button
                         variant="outlined"
@@ -1492,8 +1614,18 @@ export const ProductManagementPage = () => {
                       <Typography variant="body2" color="text.secondary">
                         Shelf life (days)
                       </Typography>
-                      <Typography variant="subtitle1">
-                        {detailProduct.shelfLifeDays ?? '—'}
+                      <Typography
+                        variant="subtitle1"
+                        sx={theme => ({
+                          color: detailProduct.isPerishable
+                            ? detailProduct.shelfLifeDays && detailProduct.shelfLifeDays > 0
+                              ? theme.palette.warning.dark
+                              : theme.palette.warning.main
+                            : theme.palette.text.secondary,
+                          fontWeight: detailProduct.isPerishable ? 600 : undefined,
+                        })}
+                      >
+                        {detailShelfLifeDisplay}
                       </Typography>
                     </Grid>
                     <Grid item xs={12} sm={6}>
