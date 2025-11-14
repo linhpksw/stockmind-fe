@@ -52,6 +52,7 @@ import { SectionHeading } from '../components/common/SectionHeading'
 import { exportRowsToXlsx, parseFirstSheet } from '../lib/xlsx'
 import { type CategoryOption, UNCATEGORIZED_CATEGORY, resolveCategory } from '../utils/categories'
 import type { CategoryNode } from '../types/categories'
+import type { Theme } from '@mui/material/styles'
 import type {
   ImportProductsRequest,
   Product,
@@ -1506,7 +1507,7 @@ export const ProductManagementPage = () => {
                   label={detailProduct.isPerishable ? 'Perishable item' : 'Shelf-stable'}
                   variant="filled"
                   size="small"
-                  sx={theme => ({
+                  sx={(theme: Theme) => ({
                     fontWeight: 600,
                     textTransform: 'uppercase',
                     letterSpacing: 0.5,
@@ -1616,7 +1617,7 @@ export const ProductManagementPage = () => {
                       </Typography>
                       <Typography
                         variant="subtitle1"
-                        sx={theme => ({
+                        sx={(theme: Theme) => ({
                           color: detailProduct.isPerishable
                             ? detailProduct.shelfLifeDays && detailProduct.shelfLifeDays > 0
                               ? theme.palette.warning.dark

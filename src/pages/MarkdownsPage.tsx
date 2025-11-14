@@ -35,6 +35,7 @@ import {
   useState,
   type ChangeEvent,
   type FormEvent,
+  type ReactElement,
   type SyntheticEvent,
 } from 'react'
 import {
@@ -74,6 +75,25 @@ interface RuleDialogState {
   mode: 'create' | 'edit'
   rule?: MarkdownRule
 }
+
+const BaseAutocomplete = Autocomplete as unknown as (props: Record<string, unknown>) => ReactElement
+
+type SingleSelectAutocompleteProps<T> = {
+  options: T[]
+  value: T | null
+  onChange: (event: SyntheticEvent<Element, Event>, value: T | null) => void
+  getOptionLabel: (option: T) => string
+  isOptionEqualToValue: (option: T, value: T) => boolean
+  renderInput: (params: Record<string, unknown>) => ReactElement
+  loading?: boolean
+  disabled?: boolean
+  fullWidth?: boolean
+  clearOnEscape?: boolean
+}
+
+const SingleSelectAutocomplete = <T,>(props: SingleSelectAutocompleteProps<T>) => (
+  <BaseAutocomplete {...props} />
+)
 
 const fractionToPercent = (value?: number, fallback = 0): number =>
   Number(((value ?? fallback) * 100).toFixed(2))
@@ -578,12 +598,15 @@ export const MarkdownsPage = () => {
             <Stack spacing={2}>
               <Grid container spacing={2} sx={{ pr: 4 }}>
                 <Grid item xs={12} md={6}>
-                  <Autocomplete
+                  <SingleSelectAutocomplete<ParentCategoryOption>
                     options={parentCategoryOptions}
                     value={ruleForm.parentCategory}
                     onChange={handleParentCategoryChange}
-                    getOptionLabel={option => option?.label ?? ''}
-                    isOptionEqualToValue={(option, value) => option.key === value.key}
+                    getOptionLabel={(option: ParentCategoryOption) => option?.label ?? ''}
+                    isOptionEqualToValue={(
+                      option: ParentCategoryOption,
+                      value: ParentCategoryOption,
+                    ) => option.key === value.key}
                     loading={categoriesQuery.isFetching}
                     fullWidth
                     clearOnEscape
@@ -598,12 +621,14 @@ export const MarkdownsPage = () => {
                   />
                 </Grid>
                 <Grid item xs={12} md={6}>
-                  <Autocomplete
+                  <SingleSelectAutocomplete<CategoryOption>
                     options={availableChildOptions}
                     value={ruleForm.childCategory}
                     onChange={handleChildCategoryChange}
-                    getOptionLabel={option => option.label}
-                    isOptionEqualToValue={(option, value) => option.key === value.key}
+                    getOptionLabel={(option: CategoryOption) => option.label}
+                    isOptionEqualToValue={(option: CategoryOption, value: CategoryOption) =>
+                      option.key === value.key
+                    }
                     disabled={!ruleForm.parentCategory || availableChildOptions.length === 0}
                     fullWidth
                     renderInput={params => (
