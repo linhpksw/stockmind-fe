@@ -36,11 +36,7 @@ const NAV_ITEMS = [
   },
   { label: 'Receiving (GRN)', path: '/app/receiving', icon: <ReceiptLong fontSize="small" /> },
   { label: 'Markdowns', path: '/app/markdowns', icon: <Inventory2 fontSize="small" /> },
-  {
-    label: 'Replenishment',
-    path: '/app/replenishment',
-    icon: <AutoAwesomeMotion fontSize="small" />,
-  },
+  { label: 'Margins', path: '/app/margins', icon: <AutoAwesomeMotion fontSize="small" /> },
   { label: 'Waste', path: '/app/waste', icon: <Recycling fontSize="small" /> },
 ]
 

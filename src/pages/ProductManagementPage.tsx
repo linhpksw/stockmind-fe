@@ -890,26 +890,6 @@ export const ProductManagementPage = () => {
         subtitle="Browse, import, and maintain SKU attributes."
         action={
           <Stack spacing={1} alignItems={{ xs: 'flex-start', md: 'flex-end' }} maxWidth={520}>
-            <Stack spacing={0.25} textAlign={{ xs: 'left', md: 'right' }}>
-              <Typography variant="subtitle2" color="text.secondary">
-                Bulk actions
-              </Typography>
-              <Typography variant="caption" color="text.secondary">
-                Format: <strong>product_id</strong>, <strong>sku_code</strong>,{' '}
-                <strong>name</strong>, <strong>uom</strong>, <strong>price</strong>,{' '}
-                <strong>media_url</strong>, <strong>category_name</strong>,{' '}
-                <strong>brand_name</strong>, <strong>is_perishable</strong>,{' '}
-                <strong>shelf_life_days</strong>, <strong>min_stock</strong>.
-              </Typography>
-              <Typography variant="caption" color="text.secondary">
-                Category and brand names must already exist in their modules. Rows that do not match
-                are skipped during import.
-              </Typography>
-              <Typography variant="caption" color="text.secondary">
-                Use TRUE/FALSE for <strong>is_perishable</strong>. Shelf life and min stock update
-                only when their columns are provided.
-              </Typography>
-            </Stack>
             <Stack direction={{ xs: 'column', md: 'row' }} spacing={1} alignItems="flex-end">
               <Button
                 variant="outlined"
