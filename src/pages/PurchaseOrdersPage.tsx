@@ -6,7 +6,6 @@ import {
   Button,
   Card,
   CardContent,
-  Chip,
   Divider,
   Grid,
   Paper,
@@ -14,18 +13,17 @@ import {
   TextField,
   Typography,
 } from '@mui/material'
-import { useMutation, useQuery } from '@tanstack/react-query'
-import type { ChangeEvent, FormEvent, SyntheticEvent } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import type { ChangeEvent, SyntheticEvent } from 'react'
 import { useEffect, useMemo, useState, type ReactElement } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { listProducts } from '../api/products'
-import { createPurchaseOrder, getPurchaseOrder } from '../api/purchaseOrders'
+import { createPurchaseOrder } from '../api/purchaseOrders'
 import { fetchAllSuppliers } from '../api/suppliers'
 import { SectionHeading } from '../components/common/SectionHeading'
 import type { CreatePoRequest, PoItemInput } from '../types/purchaseOrders'
 import type { Product } from '../types/products'
 import type { Supplier } from '../types/suppliers'
-import { formatDateTime } from '../utils/formatters'
 
 const generateId = () => Math.random().toString(36).slice(2, 10)
 const todayIso = () => new Date().toISOString().split('T')[0]
@@ -84,7 +82,6 @@ const createDraft = (overrides?: Partial<PurchaseOrderDraft>): PurchaseOrderDraf
 export const PurchaseOrdersPage = () => {
   const [drafts, setDrafts] = useState<PurchaseOrderDraft[]>([createDraft()])
   const [draftFeedback, setDraftFeedback] = useState<Record<string, DraftFeedback>>({})
-  const [poIdLookup, setPoIdLookup] = useState('')
   const [appliedQueryKey, setAppliedQueryKey] = useState('')
   const [searchParams] = useSearchParams()
 
@@ -101,10 +98,6 @@ export const PurchaseOrdersPage = () => {
   const productsQuery = useQuery({
     queryKey: ['products'],
     queryFn: listProducts,
-  })
-
-  const lookupMutation = useMutation({
-    mutationFn: getPurchaseOrder,
   })
 
   const suppliers = useMemo<Supplier[]>(() => suppliersQuery.data ?? [], [suppliersQuery.data])
@@ -327,40 +320,12 @@ export const PurchaseOrdersPage = () => {
     }
   }
 
-  const handleLookup = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    const numericId = Number(poIdLookup)
-    if (!numericId) {
-      return
-    }
-    lookupMutation.mutate(numericId)
-  }
-
-  const handleLookupChange = (event: ChangeEvent<HTMLInputElement>) => {
-    setPoIdLookup(event.target.value)
-  }
-
-  const supplierPrefillActive = Boolean(appliedQueryKey)
-
   return (
     <Stack spacing={4}>
       <SectionHeading
         title="Purchase orders"
         subtitle="Create role-specific replenishment requests and review existing PO statuses."
       />
-
-      <Paper sx={{ p: 3, borderRadius: 4 }}>
-        <Stack spacing={1.5}>
-          <Typography variant="h6">Multi-vendor PO builder</Typography>
-          <Typography color="text.secondary">
-            Build multiple supplier-specific orders in one screen. Each draft enforces the one
-            supplier → many SKUs rule so that receiving stays tidy later.
-          </Typography>
-          {supplierPrefillActive && (
-            <Chip color="primary" size="small" label="Auto-filled from supplier quick actions" />
-          )}
-        </Stack>
-      </Paper>
 
       <Stack spacing={3}>
         {drafts.map((draft, index) => {
@@ -578,46 +543,6 @@ export const PurchaseOrdersPage = () => {
           Add another purchase order
         </Button>
       </Box>
-
-      <Card component="section">
-        <CardContent>
-          <SectionHeading title="Check existing PO status" />
-          <Stack
-            spacing={2}
-            component="form"
-            onSubmit={handleLookup}
-            mt={2}
-            maxWidth={{ xs: '100%', sm: 360 }}
-          >
-            <TextField
-              label="PO ID"
-              value={poIdLookup}
-              onChange={handleLookupChange}
-              placeholder="Enter PO number"
-              required
-            />
-            <Button type="submit" variant="outlined" disabled={lookupMutation.isPending}>
-              {lookupMutation.isPending ? 'Looking up…' : 'Fetch status'}
-            </Button>
-          </Stack>
-
-          {lookupMutation.isError && (
-            <Alert severity="error" sx={{ mt: 3 }}>
-              {lookupMutation.error instanceof Error
-                ? lookupMutation.error.message
-                : 'PO not found.'}
-            </Alert>
-          )}
-
-          {lookupMutation.data && (
-            <Box mt={3}>
-              <Typography variant="subtitle1">PO #{lookupMutation.data.id}</Typography>
-              <Typography>Status: {lookupMutation.data.status}</Typography>
-              <Typography>Created at: {formatDateTime(lookupMutation.data.createdAt)}</Typography>
-            </Box>
-          )}
-        </CardContent>
-      </Card>
     </Stack>
   )
 }
