@@ -69,6 +69,11 @@ const normalizeSearchText = (value: string): string =>
     .replace(/\s+/g, ' ')
     .trim()
 
+const EXCLUDED_CATEGORY_NAMES = new Set(['giá siêu rẻ', 'giá hội viên', 'ưu đãi hội viên'])
+
+const isExcludedCategoryName = (value?: string | null): boolean =>
+  value ? EXCLUDED_CATEGORY_NAMES.has(value.trim().toLowerCase()) : false
+
 const useDebouncedValue = <T,>(value: T, delay = 300): T => {
   const [debouncedValue, setDebouncedValue] = useState(value)
 
@@ -98,6 +103,21 @@ const MultiSelectAutocomplete = <T,>(props: MultiSelectAutocompleteProps<T>) => 
   <BaseAutocomplete {...props} multiple />
 )
 
+type SingleSelectAutocompleteProps<T> = {
+  options: T[]
+  value: T | null
+  onChange: (event: SyntheticEvent<Element, Event>, value: T | null) => void
+  getOptionLabel: (option: T) => string
+  isOptionEqualToValue: (option: T, value: T) => boolean
+  renderInput: (params: Record<string, unknown>) => ReactElement
+  loading?: boolean
+  disabled?: boolean
+}
+
+const SingleSelectAutocomplete = <T,>(props: SingleSelectAutocompleteProps<T>) => (
+  <BaseAutocomplete {...props} />
+)
+
 interface ProductFormState {
   skuCode: string
   name: string
@@ -107,7 +127,6 @@ interface ProductFormState {
   uom: string
   price: number
   minStock: number
-  leadTimeDays: number
   supplierId: string
   mediaUrl: string
 }
@@ -131,7 +150,6 @@ const defaultForm: ProductFormState = {
   uom: '',
   price: 0,
   minStock: 0,
-  leadTimeDays: 0,
   supplierId: '',
   mediaUrl: '',
 }
@@ -145,7 +163,6 @@ const normalizePayload = (form: ProductFormState): ProductRequest => ({
   uom: form.uom.trim(),
   price: Number(form.price),
   minStock: Number(form.minStock),
-  leadTimeDays: Number(form.leadTimeDays),
   supplierId: form.supplierId.trim() || undefined,
   mediaUrl: form.mediaUrl.trim() || undefined,
 })
@@ -159,7 +176,6 @@ const mapProductToForm = (product: Product): ProductFormState => ({
   uom: product.uom,
   price: product.price,
   minStock: product.minStock,
-  leadTimeDays: product.leadTimeDays,
   supplierId: product.supplierId ?? '',
   mediaUrl: product.mediaUrl ?? '',
 })
@@ -238,6 +254,9 @@ export const ProductManagementPage = () => {
     const meta = new Map<string, CategoryMetaEntry>()
 
     const registerParent = (key: string, label: string) => {
+      if (isExcludedCategoryName(label)) {
+        return
+      }
       parentOptions.push({ key, label })
       const option: CategoryOption = { key, parent: label, child: label, label }
       meta.set(key, { option, parentKey: key })
@@ -249,6 +268,9 @@ export const ProductManagementPage = () => {
       parentLabel: string,
       childLabel: string,
     ) => {
+      if (isExcludedCategoryName(parentLabel) || isExcludedCategoryName(childLabel)) {
+        return
+      }
       const option: CategoryOption = {
         key,
         parent: parentLabel,
@@ -275,24 +297,9 @@ export const ProductManagementPage = () => {
       })
     }
 
-    const ensureUncategorized = () => {
-      if (!meta.has(UNCATEGORIZED_CATEGORY.key)) {
-        const option = UNCATEGORIZED_CATEGORY
-        const parentKey = option.parent
-        const list = childLookup.get(parentKey) ?? []
-        list.unshift(option)
-        childLookup.set(parentKey, list)
-        meta.set(option.key, {
-          option,
-          parentKey,
-        })
-      }
-    }
-
     const categoriesData = categoriesQuery.data ?? []
     if (categoriesData.length > 0) {
       registerFromTree(categoriesData)
-      ensureUncategorized()
       return {
         parentCategoryOptions: parentOptions,
         childCategoryLookup: childLookup,
@@ -303,6 +310,13 @@ export const ProductManagementPage = () => {
     const fallbackChildren = new Map<string, CategoryOption>()
     products.forEach(product => {
       const option = resolveCategory(product.categoryId)
+      if (
+        option.key === UNCATEGORIZED_CATEGORY.key ||
+        isExcludedCategoryName(option.parent) ||
+        isExcludedCategoryName(option.child)
+      ) {
+        return
+      }
       fallbackChildren.set(option.key, option)
     })
     const childValues = Array.from(fallbackChildren.values()).sort((a, b) =>
@@ -310,6 +324,9 @@ export const ProductManagementPage = () => {
     )
     const parentMap = new Map<string, ParentCategoryOption>()
     childValues.forEach(option => {
+      if (isExcludedCategoryName(option.parent)) {
+        return
+      }
       parentMap.set(option.parent, { key: option.parent, label: option.parent })
       meta.set(option.key, { option, parentKey: option.parent })
       const list = childLookup.get(option.parent) ?? []
@@ -330,8 +347,6 @@ export const ProductManagementPage = () => {
         meta.set(parent.key, { option: parentOption, parentKey: parent.key })
       }
     })
-
-    ensureUncategorized()
 
     return {
       parentCategoryOptions: parentValues,
@@ -355,6 +370,14 @@ export const ProductManagementPage = () => {
     return Array.from(unique.values()).sort((a, b) => a.label.localeCompare(b.label))
   }, [childCategoryLookup, parentCategoryFilter])
 
+  const categorySelectOptions = useMemo(() => {
+    const aggregated = Array.from(childCategoryLookup.values()).flat()
+    const unique = new Map<string, CategoryOption>()
+    aggregated.forEach(option => unique.set(option.key, option))
+    unique.delete(UNCATEGORIZED_CATEGORY.key)
+    return Array.from(unique.values()).sort((a, b) => a.label.localeCompare(b.label))
+  }, [childCategoryLookup])
+
   const getCategoryInfo = useCallback(
     (categoryId?: string | null): CategoryMetaEntry => {
       const normalized = categoryId?.trim() ?? ''
@@ -373,7 +396,17 @@ export const ProductManagementPage = () => {
 
   // Define label helpers before they're used in downstream hooks
   const getCategoryLabel = useCallback(
-    (product: Product) => getCategoryInfo(product.categoryId).option.label,
+    (product: Product) => {
+      const info = getCategoryInfo(product.categoryId)
+      if (
+        info.option.key === UNCATEGORIZED_CATEGORY.key ||
+        isExcludedCategoryName(info.option.parent) ||
+        isExcludedCategoryName(info.option.child)
+      ) {
+        return '—'
+      }
+      return info.option.label
+    },
     [getCategoryInfo],
   )
 
@@ -383,6 +416,12 @@ export const ProductManagementPage = () => {
       (product.supplierId
         ? (supplierMap.get(product.supplierId)?.name ?? product.supplierId)
         : '—'),
+    [supplierMap],
+  )
+
+  const getSupplierLeadTime = useCallback(
+    (product: Product) =>
+      product.supplierId ? (supplierMap.get(product.supplierId)?.leadTimeDays ?? null) : null,
     [supplierMap],
   )
 
@@ -750,6 +789,8 @@ export const ProductManagementPage = () => {
     detailProductAlerts.push({ severity: 'error', message: 'No supplier linked to this SKU.' })
   }
 
+  const detailProductLeadTime = detailProduct ? getSupplierLeadTime(detailProduct) : null
+
   return (
     <Stack spacing={3}>
       <SectionHeading
@@ -977,16 +1018,40 @@ export const ProductManagementPage = () => {
                       <Typography fontWeight={600}>{product.skuCode}</Typography>
                     </TableCell>
                     <TableCell>
-                      <Stack spacing={0.5}>
-                        <Typography fontWeight={600}>{product.name}</Typography>
-                        <Typography
-                          variant="body2"
-                          color="text.secondary"
-                          noWrap
-                          sx={{ maxWidth: 320 }}
+                      <Stack direction="row" spacing={1.5} alignItems="center">
+                        <Box
+                          sx={{
+                            width: 48,
+                            height: 48,
+                            borderRadius: 1.5,
+                            overflow: 'hidden',
+                            border: theme => `1px solid ${theme.palette.divider}`,
+                            bgcolor: product.mediaUrl ? 'transparent' : 'action.hover',
+                            flexShrink: 0,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}
                         >
-                          {getCategoryLabel(product)}
-                        </Typography>
+                          {product.mediaUrl ? (
+                            <Box
+                              component="img"
+                              src={product.mediaUrl}
+                              alt={product.name}
+                              loading="lazy"
+                              sx={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                            />
+                          ) : (
+                            <Typography variant="subtitle2" color="text.secondary">
+                              {(
+                                (product.name?.trim() || product.skuCode || '?')[0] ?? '?'
+                              ).toUpperCase()}
+                            </Typography>
+                          )}
+                        </Box>
+                        <Stack spacing={0.5}>
+                          <Typography fontWeight={600}>{product.name}</Typography>
+                        </Stack>
                       </Stack>
                     </TableCell>
                     <TableCell>{product.uom}</TableCell>
@@ -1128,17 +1193,6 @@ export const ProductManagementPage = () => {
                   inputProps={{ min: 0, step: 1 }}
                 />
               </Grid>
-              <Grid item xs={12} sm={4}>
-                <TextField
-                  label="Lead time (days)"
-                  type="number"
-                  value={createForm.leadTimeDays}
-                  onChange={handleCreateChange('leadTimeDays')}
-                  required
-                  fullWidth
-                  inputProps={{ min: 0, step: 1 }}
-                />
-              </Grid>
             </Grid>
             {createMutation.isError && (
               <Alert severity="error" sx={{ mt: 2 }}>
@@ -1180,19 +1234,69 @@ export const ProductManagementPage = () => {
                   />
                 </Grid>
                 <Grid item xs={12} sm={6}>
-                  <TextField
-                    label="Category (ID or code)"
-                    value={editForm.categoryId}
-                    onChange={handleEditChange('categoryId')}
-                    fullWidth
+                  <SingleSelectAutocomplete<CategoryOption>
+                    options={categorySelectOptions}
+                    value={
+                      editForm.categoryId.trim()
+                        ? getCategoryInfo(editForm.categoryId).option
+                        : null
+                    }
+                    onChange={(_event, value) =>
+                      setEditForm(prev =>
+                        prev
+                          ? {
+                              ...prev,
+                              categoryId: value?.key ?? '',
+                            }
+                          : prev,
+                      )
+                    }
+                    getOptionLabel={(option: CategoryOption) => option.label}
+                    isOptionEqualToValue={(option: CategoryOption, value: CategoryOption) =>
+                      option.key === value.key
+                    }
+                    renderInput={params => (
+                      <TextField
+                        {...params}
+                        label="Category"
+                        placeholder="Search parent or child categories"
+                        fullWidth
+                      />
+                    )}
+                    loading={categoriesQuery.isLoading}
                   />
                 </Grid>
                 <Grid item xs={12} sm={6}>
-                  <TextField
-                    label="Supplier ID"
-                    value={editForm.supplierId}
-                    onChange={handleEditChange('supplierId')}
-                    fullWidth
+                  <SingleSelectAutocomplete<Supplier>
+                    options={suppliers}
+                    value={
+                      editForm.supplierId.trim()
+                        ? (supplierMap.get(editForm.supplierId) ?? null)
+                        : null
+                    }
+                    onChange={(_event, value) =>
+                      setEditForm(prev =>
+                        prev
+                          ? {
+                              ...prev,
+                              supplierId: value?.id ?? '',
+                            }
+                          : prev,
+                      )
+                    }
+                    getOptionLabel={(option: Supplier) => option.name}
+                    isOptionEqualToValue={(option: Supplier, value: Supplier) =>
+                      option.id === value.id
+                    }
+                    renderInput={params => (
+                      <TextField
+                        {...params}
+                        label="Supplier"
+                        placeholder="Search suppliers"
+                        fullWidth
+                      />
+                    )}
+                    loading={suppliersQuery.isLoading}
                   />
                 </Grid>
                 <Grid item xs={12}>
@@ -1251,17 +1355,6 @@ export const ProductManagementPage = () => {
                     type="number"
                     value={editForm.minStock}
                     onChange={handleEditChange('minStock')}
-                    required
-                    fullWidth
-                    inputProps={{ min: 0, step: 1 }}
-                  />
-                </Grid>
-                <Grid item xs={12} sm={4}>
-                  <TextField
-                    label="Lead time (days)"
-                    type="number"
-                    value={editForm.leadTimeDays}
-                    onChange={handleEditChange('leadTimeDays')}
                     required
                     fullWidth
                     inputProps={{ min: 0, step: 1 }}
@@ -1393,7 +1486,7 @@ export const ProductManagementPage = () => {
                       <Typography variant="body2" color="text.secondary">
                         Lead time (days)
                       </Typography>
-                      <Typography variant="subtitle1">{detailProduct.leadTimeDays}</Typography>
+                      <Typography variant="subtitle1">{detailProductLeadTime ?? '—'}</Typography>
                     </Grid>
                     <Grid item xs={12} sm={6}>
                       <Typography variant="body2" color="text.secondary">

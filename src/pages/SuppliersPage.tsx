@@ -28,18 +28,24 @@ import {
 } from '@mui/material'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { ChangeEvent, FormEvent, SyntheticEvent } from 'react'
-import { useMemo, useRef, useState, type ReactElement } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { listProducts } from '../api/products'
-import { createSupplier, fetchAllSuppliers } from '../api/suppliers'
+import { createSupplier, fetchAllSuppliers, importSuppliers } from '../api/suppliers'
+import { fetchCategories } from '../api/categories'
 import { SectionHeading } from '../components/common/SectionHeading'
 import { exportRowsToXlsx, parseFirstSheet } from '../lib/xlsx'
 import { useSearchStore } from '../stores/search-store'
 import type { Product } from '../types/products'
-import type { CreateSupplierRequest } from '../types/suppliers'
+import type { CreateSupplierRequest, SupplierImportRow } from '../types/suppliers'
 import { type CategoryOption, UNCATEGORIZED_CATEGORY, resolveCategory } from '../utils/categories'
+import type { CategoryNode } from '../types/categories'
 
 const BaseAutocomplete = Autocomplete as unknown as (props: Record<string, unknown>) => ReactElement
+
+const EXCLUDED_CATEGORY_NAMES = new Set(['giá siêu rẻ', 'giá hội viên', 'ưu đãi hội viên'])
+const isExcludedCategoryName = (value?: string | null): boolean =>
+  value ? EXCLUDED_CATEGORY_NAMES.has(value.trim().toLowerCase()) : false
 
 type MultiSelectAutocompleteProps<T> = {
   options: T[]
@@ -55,6 +61,28 @@ const MultiSelectAutocomplete = <T,>(props: MultiSelectAutocompleteProps<T>) => 
   <BaseAutocomplete {...props} multiple />
 )
 
+const getFormattedCategoryLabel = (categoryId?: string | null): string => {
+  const option = resolveCategory(categoryId)
+  if (
+    option.key === UNCATEGORIZED_CATEGORY.key ||
+    isExcludedCategoryName(option.parent) ||
+    isExcludedCategoryName(option.child)
+  ) {
+    return '—'
+  }
+  return option.label
+}
+
+interface ParentCategoryOption {
+  key: string
+  label: string
+}
+
+interface CategoryMetaEntry {
+  option: CategoryOption
+  parentKey: string
+}
+
 export const SuppliersPage = () => {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [form, setForm] = useState<CreateSupplierRequest>({
@@ -63,7 +91,8 @@ export const SuppliersPage = () => {
     leadTimeDays: 0,
   })
   const [selectedProducts, setSelectedProducts] = useState<Product[]>([])
-  const [selectedCategories, setSelectedCategories] = useState<CategoryOption[]>([])
+  const [parentCategoryFilter, setParentCategoryFilter] = useState<ParentCategoryOption[]>([])
+  const [childCategoryFilter, setChildCategoryFilter] = useState<CategoryOption[]>([])
   const [importing, setImporting] = useState(false)
   const [xlsxFeedback, setXlsxFeedback] = useState<{
     type: 'success' | 'error'
@@ -82,6 +111,11 @@ export const SuppliersPage = () => {
   const productsQuery = useQuery({
     queryKey: ['products'],
     queryFn: listProducts,
+  })
+
+  const categoriesQuery = useQuery({
+    queryKey: ['categories-tree'],
+    queryFn: fetchCategories,
   })
 
   const createMutation = useMutation({
@@ -115,29 +149,155 @@ export const SuppliersPage = () => {
     return map
   }, [products])
 
-  const categoryLookup = useMemo(() => {
-    const map = new Map<string, CategoryOption>()
-    map.set(UNCATEGORIZED_CATEGORY.key, UNCATEGORIZED_CATEGORY)
+  const {
+    parentCategoryOptions,
+    childCategoryLookup,
+    categoryMeta,
+  }: {
+    parentCategoryOptions: ParentCategoryOption[]
+    childCategoryLookup: Map<string, CategoryOption[]>
+    categoryMeta: Map<string, CategoryMetaEntry>
+  } = useMemo(() => {
+    const parentOptions: ParentCategoryOption[] = []
+    const childLookup = new Map<string, CategoryOption[]>()
+    const meta = new Map<string, CategoryMetaEntry>()
+
+    const registerParent = (key: string, label: string) => {
+      if (isExcludedCategoryName(label)) {
+        return
+      }
+      parentOptions.push({ key, label })
+      const option: CategoryOption = { key, parent: label, child: label, label }
+      meta.set(key, { option, parentKey: key })
+    }
+
+    const registerChild = (
+      key: string,
+      parentKey: string,
+      parentLabel: string,
+      childLabel: string,
+    ) => {
+      if (isExcludedCategoryName(parentLabel) || isExcludedCategoryName(childLabel)) {
+        return
+      }
+      const option: CategoryOption = {
+        key,
+        parent: parentLabel,
+        child: childLabel,
+        label: `${parentLabel} › ${childLabel}`,
+      }
+      const list = childLookup.get(parentKey) ?? []
+      list.push(option)
+      childLookup.set(parentKey, list)
+      meta.set(key, { option, parentKey })
+    }
+
+    const registerFromTree = (nodes: CategoryNode[]) => {
+      const sortedParents = [...nodes].sort((a, b) => a.name.localeCompare(b.name))
+      sortedParents.forEach(parent => {
+        const parentKey = String(parent.categoryId)
+        registerParent(parentKey, parent.name)
+        parent.children
+          ?.slice()
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .forEach(child => {
+            registerChild(String(child.categoryId), parentKey, parent.name, child.name)
+          })
+      })
+    }
+
+    const categoriesData = categoriesQuery.data ?? []
+    if (categoriesData.length > 0) {
+      registerFromTree(categoriesData)
+      return {
+        parentCategoryOptions: parentOptions,
+        childCategoryLookup: childLookup,
+        categoryMeta: meta,
+      }
+    }
+
+    const fallbackChildren = new Map<string, CategoryOption>()
     products.forEach(product => {
       const option = resolveCategory(product.categoryId)
-      map.set(option.key, option)
+      if (
+        option.key === UNCATEGORIZED_CATEGORY.key ||
+        isExcludedCategoryName(option.parent) ||
+        isExcludedCategoryName(option.child)
+      ) {
+        return
+      }
+      fallbackChildren.set(option.key, option)
     })
-    return map
-  }, [products])
-
-  const categoryOptions = useMemo(
-    () =>
-      Array.from(categoryLookup.values()).sort((a, b) => {
-        if (a.parent === b.parent) {
-          return a.child.localeCompare(b.child)
+    const childValues = Array.from(fallbackChildren.values()).sort((a, b) =>
+      a.label.localeCompare(b.label),
+    )
+    const parentMap = new Map<string, ParentCategoryOption>()
+    childValues.forEach(option => {
+      if (isExcludedCategoryName(option.parent)) {
+        return
+      }
+      parentMap.set(option.parent, { key: option.parent, label: option.parent })
+      meta.set(option.key, { option, parentKey: option.parent })
+      const list = childLookup.get(option.parent) ?? []
+      list.push(option)
+      childLookup.set(option.parent, list)
+    })
+    const parentValues = Array.from(parentMap.values()).sort((a, b) =>
+      a.label.localeCompare(b.label),
+    )
+    parentValues.forEach(parent => {
+      if (!meta.has(parent.key)) {
+        const parentOption: CategoryOption = {
+          key: parent.key,
+          parent: parent.label,
+          child: parent.label,
+          label: parent.label,
         }
-        return a.parent.localeCompare(b.parent)
-      }),
-    [categoryLookup],
+        meta.set(parent.key, { option: parentOption, parentKey: parent.key })
+      }
+    })
+
+    return {
+      parentCategoryOptions: parentValues,
+      childCategoryLookup: childLookup,
+      categoryMeta: meta,
+    }
+  }, [categoriesQuery.data, products])
+
+  const derivedChildCategoryOptions = useMemo<CategoryOption[]>(() => {
+    if (parentCategoryFilter.length === 0) {
+      const all = Array.from(childCategoryLookup.values()).flat()
+      const unique = new Map(all.map(option => [option.key, option]))
+      return Array.from(unique.values()).sort((a, b) => a.label.localeCompare(b.label))
+    }
+
+    const selectedParents = parentCategoryFilter.map(option => option.key)
+    const aggregated = selectedParents.flatMap(
+      parentKey => childCategoryLookup.get(parentKey) ?? [],
+    )
+    const unique = new Map(aggregated.map(option => [option.key, option]))
+    return Array.from(unique.values()).sort((a, b) => a.label.localeCompare(b.label))
+  }, [childCategoryLookup, parentCategoryFilter])
+
+  const getCategoryInfo = useCallback(
+    (categoryId?: string | null): CategoryMetaEntry => {
+      const normalized = categoryId?.trim() ?? ''
+      const existing = categoryMeta.get(normalized)
+      if (existing) {
+        return existing
+      }
+      const fallback = resolveCategory(categoryId)
+      return {
+        option: fallback,
+        parentKey: fallback.parent,
+      }
+    },
+    [categoryMeta],
   )
 
   const productFilterIds = selectedProducts.map(product => product.id)
-  const categoryFilterKeys = selectedCategories.map(category => category.key)
+  const parentFilterKeys = parentCategoryFilter.map(option => option.key)
+  const childFilterKeys = childCategoryFilter.map(option => option.key)
 
   const filteredSuppliers = useMemo(() => {
     return sortedSuppliers.filter(supplier => {
@@ -157,21 +317,44 @@ export const SuppliersPage = () => {
         supplierProducts.some(product => productFilterIds.includes(product.id))
 
       const matchesCategoryFilter =
-        categoryFilterKeys.length === 0 ||
+        (parentFilterKeys.length === 0 && childFilterKeys.length === 0) ||
         supplierProducts.some(product => {
-          const categoryKey = resolveCategory(product.categoryId).key
-          return categoryFilterKeys.includes(categoryKey)
+          const info = getCategoryInfo(product.categoryId)
+          const matchesParent =
+            parentFilterKeys.length === 0 || parentFilterKeys.includes(info.parentKey)
+          const matchesChild =
+            childFilterKeys.length === 0 || childFilterKeys.includes(info.option.key)
+          return matchesParent && matchesChild
         })
 
       return matchesProductFilter && matchesCategoryFilter
     })
-  }, [sortedSuppliers, supplierProductsMap, globalQuery, productFilterIds, categoryFilterKeys])
+  }, [
+    sortedSuppliers,
+    supplierProductsMap,
+    globalQuery,
+    productFilterIds,
+    parentFilterKeys,
+    childFilterKeys,
+    getCategoryInfo,
+  ])
 
   const resetImportInput = () => {
     if (fileInputRef.current) {
       fileInputRef.current.value = ''
     }
   }
+
+  useEffect(() => {
+    if (parentCategoryFilter.length === 0) {
+      return
+    }
+    const allowed = new Set(derivedChildCategoryOptions.map(option => option.key))
+    setChildCategoryFilter(prev => {
+      const next = prev.filter(option => allowed.has(option.key))
+      return next.length === prev.length ? prev : next
+    })
+  }, [parentCategoryFilter, derivedChildCategoryOptions])
 
   const handleExportSuppliers = () => {
     if (sortedSuppliers.length === 0) {
@@ -219,7 +402,7 @@ export const SuppliersPage = () => {
         return Number.isFinite(numeric) && numeric >= 0 ? Math.round(numeric) : 0
       }
 
-      const payloads: CreateSupplierRequest[] = []
+      const importRows: SupplierImportRow[] = []
       let skipped = 0
 
       rows.forEach(row => {
@@ -238,6 +421,14 @@ export const SuppliersPage = () => {
         }
 
         const contact = normalizeString(row['contact'] ?? row['Contact'])
+        const supplierId = normalizeString(
+          row['supplier_id'] ??
+            row['Supplier ID'] ??
+            row['SupplierId'] ??
+            row['SUPPLIER_ID'] ??
+            row['id'] ??
+            row['ID'],
+        )
         const leadTimeDays = normalizeLeadTime(
           row['lead_time_days'] ??
             row['Lead Time Days'] ??
@@ -247,49 +438,45 @@ export const SuppliersPage = () => {
             row['lead time'],
         )
 
-        payloads.push({
+        importRows.push({
+          supplierId: supplierId || undefined,
           name,
           contact: contact || undefined,
           leadTimeDays,
         })
       })
 
-      if (payloads.length === 0) {
-        throw new Error('No valid supplier rows found. A "name" column is required.')
+      if (importRows.length === 0) {
+        throw new Error('No valid supplier rows found. Include at least a "name" column.')
       }
 
-      let created = 0
-      let failed = 0
-
-      for (const payload of payloads) {
-        try {
-          await createSupplier(payload)
-          created += 1
-        } catch (error) {
-          console.error('Supplier import failed', payload.name, error)
-          failed += 1
-        }
-      }
+      const result = await importSuppliers({ rows: importRows })
 
       await queryClient.invalidateQueries({ queryKey: ['suppliers-directory'] })
 
-      const messages = [`Imported ${created} supplier${created === 1 ? '' : 's'}.`]
+      const messages: string[] = []
 
-      if (skipped > 0) {
-        messages.push(
-          `${skipped} row${skipped === 1 ? '' : 's'} skipped because they were missing a name.`,
-        )
+      if (result.created > 0) {
+        messages.push(`Created ${result.created} supplier${result.created === 1 ? '' : 's'}.`)
       }
 
-      if (failed > 0) {
+      if (result.updated > 0) {
+        messages.push(`Updated ${result.updated} supplier${result.updated === 1 ? '' : 's'}.`)
+      }
+
+      const totalSkipped = result.skippedInvalid + skipped
+      if (totalSkipped > 0) {
         messages.push(
-          `${failed} row${failed === 1 ? '' : 's'} could not be saved (often due to duplicates).`,
+          `${totalSkipped} row${totalSkipped === 1 ? '' : 's'} skipped because they were invalid or missing a name.`,
         )
       }
 
       setXlsxFeedback({
-        type: failed > 0 ? 'error' : 'success',
-        message: messages.join(' '),
+        type: result.skippedInvalid > 0 ? 'error' : 'success',
+        message:
+          messages.length > 0
+            ? messages.join(' ')
+            : 'No rows were imported. Verify the spreadsheet contents and try again.',
       })
     } catch (error) {
       setXlsxFeedback({
@@ -328,7 +515,8 @@ export const SuppliersPage = () => {
 
   const clearFilters = () => {
     setSelectedProducts([])
-    setSelectedCategories([])
+    setParentCategoryFilter([])
+    setChildCategoryFilter([])
   }
 
   const supplierCountLabel =
@@ -390,12 +578,14 @@ export const SuppliersPage = () => {
               <FilterAltIcon fontSize="small" color="primary" />
               <Typography variant="h6">Filter suppliers</Typography>
             </Stack>
-            {(selectedProducts.length > 0 || selectedCategories.length > 0) && (
+            {(selectedProducts.length > 0 ||
+              parentCategoryFilter.length > 0 ||
+              childCategoryFilter.length > 0) && (
               <Button onClick={clearFilters}>Clear filters</Button>
             )}
           </Stack>
           <Grid container spacing={2}>
-            <Grid item xs={12} md={6}>
+            <Grid item xs={12} md={4}>
               <MultiSelectAutocomplete<Product>
                 options={products}
                 getOptionLabel={(option: Product) => option.name}
@@ -410,21 +600,44 @@ export const SuppliersPage = () => {
                 loading={productsQuery.isLoading}
               />
             </Grid>
-            <Grid item xs={12} md={6}>
+            <Grid item xs={12} md={4}>
+              <MultiSelectAutocomplete<ParentCategoryOption>
+                options={parentCategoryOptions}
+                value={parentCategoryFilter}
+                onChange={(_event: SyntheticEvent<Element, Event>, value: ParentCategoryOption[]) =>
+                  setParentCategoryFilter(value)
+                }
+                getOptionLabel={(option: ParentCategoryOption) => option.label}
+                isOptionEqualToValue={(option: ParentCategoryOption, value: ParentCategoryOption) =>
+                  option.key === value.key
+                }
+                renderInput={params => (
+                  <TextField
+                    {...params}
+                    label="Category level 1"
+                    placeholder="All parent categories"
+                  />
+                )}
+              />
+            </Grid>
+            <Grid item xs={12} md={4}>
               <MultiSelectAutocomplete<CategoryOption>
-                options={categoryOptions}
+                options={derivedChildCategoryOptions}
+                value={childCategoryFilter}
+                onChange={(_event: SyntheticEvent<Element, Event>, value: CategoryOption[]) =>
+                  setChildCategoryFilter(value)
+                }
                 getOptionLabel={(option: CategoryOption) => option.label}
                 isOptionEqualToValue={(option: CategoryOption, value: CategoryOption) =>
                   option.key === value.key
                 }
-                value={selectedCategories}
-                onChange={(_event: SyntheticEvent<Element, Event>, value: CategoryOption[]) =>
-                  setSelectedCategories(value)
-                }
                 renderInput={params => (
-                  <TextField {...params} label="Filter by category" placeholder="Select category" />
+                  <TextField
+                    {...params}
+                    label="Category level 2"
+                    placeholder="All child categories"
+                  />
                 )}
-                loading={productsQuery.isLoading}
               />
             </Grid>
           </Grid>
@@ -433,8 +646,19 @@ export const SuppliersPage = () => {
             {selectedProducts.map(product => (
               <Chip key={product.id} label={`SKU · ${product.name}`} variant="outlined" />
             ))}
-            {selectedCategories.map(category => (
-              <Chip key={category.key} label={`Category · ${category.label}`} variant="outlined" />
+            {parentCategoryFilter.map(option => (
+              <Chip
+                key={`parent-${option.key}`}
+                label={`Cat 1 · ${option.label}`}
+                variant="outlined"
+              />
+            ))}
+            {childCategoryFilter.map(option => (
+              <Chip
+                key={`child-${option.key}`}
+                label={`Cat 2 · ${option.child}`}
+                variant="outlined"
+              />
             ))}
           </Stack>
         </Stack>
@@ -449,8 +673,8 @@ export const SuppliersPage = () => {
             <TableRow>
               <TableCell width="80px">No.</TableCell>
               <TableCell>Supplier</TableCell>
-              <TableCell>Contact</TableCell>
-              <TableCell>Lead time (days)</TableCell>
+              <TableCell align="center">Contact</TableCell>
+              <TableCell align="center">Lead time (days)</TableCell>
               <TableCell>Categories</TableCell>
               <TableCell align="right">Actions</TableCell>
             </TableRow>
@@ -480,11 +704,12 @@ export const SuppliersPage = () => {
                   new Map(
                     supplierProducts.map(product => {
                       const label =
-                        product.categoryName?.trim() || resolveCategory(product.categoryId).label
+                        product.categoryName?.trim() ||
+                        getFormattedCategoryLabel(product.categoryId)
                       return [label, label] as const
                     }),
                   ).values(),
-                )
+                ).filter(label => label !== '—')
 
                 return (
                   <TableRow hover key={supplier.id}>
@@ -501,14 +726,16 @@ export const SuppliersPage = () => {
                         </Stack>
                       </Stack>
                     </TableCell>
-                    <TableCell>
+                    <TableCell align="center">
                       {supplier.contact ? (
                         <Typography>{supplier.contact}</Typography>
                       ) : (
                         <Typography color="text.secondary">—</Typography>
                       )}
                     </TableCell>
-                    <TableCell>{supplier.leadTimeDays}</TableCell>
+                    <TableCell align="center">
+                      <Typography>{supplier.leadTimeDays}</Typography>
+                    </TableCell>
                     <TableCell>
                       {categoryBadges.length === 0 ? (
                         <Typography color="text.secondary">—</Typography>
