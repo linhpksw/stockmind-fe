@@ -20,5 +20,28 @@ export interface MarkdownApplyResponse {
   effectivePrice: number
 }
 
+export interface MarkdownRule {
+  id: number
+  scope: string
+  categoryId?: string | null
+  categoryName?: string | null
+  categoryCode?: string | null
+  daysToExpiry: number
+  discountPercent: number
+  floorPercentOfCost: number
+  createdAt: string
+  lastModifiedAt: string
+  deleted: boolean
+}
+
+export interface UpsertMarkdownRuleRequest {
+  categoryId?: string | null
+  daysToExpiry: number
+  discountPercent: number
+  floorPercentOfCost: number
+}
+
 export type MarkdownRecommendationsResponse = ApiResponse<MarkdownRecommendation[]>
 export type MarkdownApplyApiResponse = ApiResponse<MarkdownApplyResponse>
+export type MarkdownRulesResponse = ApiResponse<MarkdownRule[]>
+export type MarkdownRuleApiResponse = ApiResponse<MarkdownRule>
