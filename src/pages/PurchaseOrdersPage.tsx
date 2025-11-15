@@ -1,3 +1,5 @@
+import AddCircleOutline from '@mui/icons-material/AddCircleOutline'
+import DeleteOutline from '@mui/icons-material/DeleteOutline'
 import KeyboardArrowDown from '@mui/icons-material/KeyboardArrowDown'
 import KeyboardArrowRight from '@mui/icons-material/KeyboardArrowRight'
 import FilterAltIcon from '@mui/icons-material/FilterAlt'
@@ -8,6 +10,10 @@ import {
   Box,
   Button,
   Chip,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   IconButton,
   Paper,
   Stack,
@@ -21,23 +27,38 @@ import {
   TextField,
   Typography,
 } from '@mui/material'
+import { alpha } from '@mui/material/styles'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Fragment,
+  useCallback,
   useEffect,
   useMemo,
   useState,
+  useTransition,
   type ChangeEvent,
   type ReactElement,
   type SyntheticEvent,
 } from 'react'
-import { fetchAllPurchaseOrderSummaries, syncPurchaseOrders } from '../api/purchaseOrders'
+import {
+  createPurchaseOrder,
+  fetchAllPurchaseOrderSummaries,
+  syncPurchaseOrders,
+} from '../api/purchaseOrders'
+import { listProducts } from '../api/products'
+import { listMarginProfiles } from '../api/margins'
 import { SectionHeading } from '../components/common/SectionHeading'
 import { useCategoryFilters, type ParentCategoryOption } from '../hooks/useCategoryFilters'
 import { useProductCategoryMap } from '../hooks/useProductCategoryMap'
 import { useSupplierOptions } from '../hooks/useSupplierOptions'
 import type { CategoryOption } from '../utils/categories'
-import type { PurchaseOrderSummary } from '../types/purchaseOrders'
+import type {
+  CreatePurchaseOrderItemRequest,
+  CreatePurchaseOrderRequest,
+  PurchaseOrderSummary,
+} from '../types/purchaseOrders'
+import type { Product } from '../types/products'
+import type { Supplier } from '../types/suppliers'
 import { formatDateTime } from '../utils/formatters'
 
 const currencyFormatter = new Intl.NumberFormat('vi-VN', {
@@ -61,6 +82,133 @@ const useDebouncedValue = <T,>(value: T, delay = 300): T => {
   return debounced
 }
 
+type PurchaseOrderItemForm = {
+  productId: string
+  qty: string
+  unitCost: string
+  expectedDate: string
+}
+
+type SupplierOrderForm = {
+  id: string
+  supplierId: string
+  items: PurchaseOrderItemForm[]
+}
+
+type PurchaseOrderFormState = {
+  orders: SupplierOrderForm[]
+}
+
+const createEmptyOrderItem = (): PurchaseOrderItemForm => ({
+  productId: '',
+  qty: '',
+  unitCost: '',
+  expectedDate: '',
+})
+
+const createSupplierOrder = (): SupplierOrderForm => ({
+  id:
+    typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  supplierId: '',
+  items: [createEmptyOrderItem()],
+})
+
+const createInitialOrderState = (): PurchaseOrderFormState => ({
+  orders: [createSupplierOrder()],
+})
+
+const PO_CREATE_DRAFT_STORAGE_KEY = 'po-create-draft'
+
+const sanitizeDraft = (draft: unknown): PurchaseOrderFormState | null => {
+  if (
+    !draft ||
+    typeof draft !== 'object' ||
+    !Array.isArray((draft as PurchaseOrderFormState).orders)
+  ) {
+    return null
+  }
+
+  const orders: SupplierOrderForm[] = (draft as PurchaseOrderFormState).orders
+    .map(order => {
+      if (!order || typeof order !== 'object') {
+        return null
+      }
+      const orderObj = order as SupplierOrderForm
+      const items =
+        Array.isArray(orderObj.items) && orderObj.items.length > 0
+          ? orderObj.items.map(item => ({
+              productId: item?.productId ?? '',
+              qty: item?.qty ?? '',
+              unitCost: item?.unitCost ?? '',
+              expectedDate: item?.expectedDate ?? '',
+            }))
+          : [createEmptyOrderItem()]
+      return {
+        id: orderObj.id || createSupplierOrder().id,
+        supplierId: orderObj.supplierId ?? '',
+        items,
+      }
+    })
+    .filter(Boolean) as SupplierOrderForm[]
+
+  if (orders.length === 0) {
+    return null
+  }
+
+  return { orders }
+}
+
+const loadDraftFromStorage = (): PurchaseOrderFormState | null => {
+  if (typeof window === 'undefined') {
+    return null
+  }
+  try {
+    const raw = window.localStorage.getItem(PO_CREATE_DRAFT_STORAGE_KEY)
+    if (!raw) {
+      return null
+    }
+    const parsed = JSON.parse(raw)
+    return sanitizeDraft(parsed)
+  } catch {
+    return null
+  }
+}
+
+const persistDraftToStorage = (state: PurchaseOrderFormState) => {
+  if (typeof window === 'undefined') {
+    return
+  }
+  try {
+    window.localStorage.setItem(PO_CREATE_DRAFT_STORAGE_KEY, JSON.stringify(state))
+  } catch {
+    // ignore storage write errors
+  }
+}
+
+const clearDraftFromStorage = () => {
+  if (typeof window === 'undefined') {
+    return
+  }
+  try {
+    window.localStorage.removeItem(PO_CREATE_DRAFT_STORAGE_KEY)
+  } catch {
+    // ignore
+  }
+}
+
+const parsePositiveNumber = (value: string): number => {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0
+}
+
+const computeItemTotal = (item: PurchaseOrderItemForm): number => {
+  const qty = parsePositiveNumber(item.qty)
+  const unitCost = parsePositiveNumber(item.unitCost)
+  return qty * unitCost
+}
+
 export const PurchaseOrdersPage = () => {
   const [expanded, setExpanded] = useState<Record<number, boolean>>({})
   const [page, setPage] = useState(0)
@@ -70,12 +218,47 @@ export const PurchaseOrdersPage = () => {
   const [supplierFilter, setSupplierFilter] = useState<string[]>([])
   const [parentCategoryFilter, setParentCategoryFilter] = useState<ParentCategoryOption[]>([])
   const [childCategoryFilter, setChildCategoryFilter] = useState<CategoryOption[]>([])
+  const [createDialogOpen, setCreateDialogOpen] = useState(false)
+  const [createForm, setCreateForm] = useState<PurchaseOrderFormState>(
+    () => loadDraftFromStorage() ?? createInitialOrderState(),
+  )
+  const [createFormError, setCreateFormError] = useState<string | null>(null)
+  const [, startCreateFormTransition] = useTransition()
   const queryClient = useQueryClient()
+
+  const resetCreateForm = () => {
+    setCreateForm(createInitialOrderState())
+    setCreateFormError(null)
+    clearDraftFromStorage()
+  }
+
+  const discardDraft = () => {
+    resetCreateForm()
+  }
+
+  useEffect(() => {
+    persistDraftToStorage(createForm)
+  }, [createForm])
+  const scheduleFormUpdate = useCallback(
+    (updater: (prev: PurchaseOrderFormState) => PurchaseOrderFormState) => {
+      startCreateFormTransition(() => {
+        setCreateForm(prev => updater(prev))
+      })
+    },
+    [startCreateFormTransition],
+  )
 
   const summaryQuery = useQuery({
     queryKey: ['purchase-orders-summary', 'all'],
     queryFn: fetchAllPurchaseOrderSummaries,
   })
+  const getSupplierTotal = useCallback((order: SupplierOrderForm) => {
+    return order.items.reduce((sum, item) => sum + computeItemTotal(item), 0)
+  }, [])
+  const formGrandTotal = useMemo(
+    () => createForm.orders.reduce((sum, order) => sum + getSupplierTotal(order), 0),
+    [createForm.orders, getSupplierTotal],
+  )
   const {
     parentCategoryOptions,
     childCategoryLookup,
@@ -84,7 +267,57 @@ export const PurchaseOrdersPage = () => {
     isLoading: isCategoryLoading,
   } = useCategoryFilters()
   const { productCategoryMap } = useProductCategoryMap(categoryMeta)
-  const { supplierOptions, isLoading: isSupplierLoading } = useSupplierOptions()
+  const { supplierOptions, suppliers, isLoading: isSupplierLoading } = useSupplierOptions()
+  const productsQuery = useQuery({
+    queryKey: ['products-directory'],
+    queryFn: listProducts,
+    enabled: createDialogOpen,
+  })
+  const marginProfilesQuery = useQuery({
+    queryKey: ['margin-profiles'],
+    queryFn: listMarginProfiles,
+    staleTime: 5 * 60 * 1000,
+  })
+  const marginLookup = useMemo(() => {
+    const lookup = new Map<string, number>()
+    marginProfilesQuery.data?.forEach(profile => {
+      lookup.set(String(profile.parentCategoryId), profile.targetMarginPct)
+    })
+    return lookup
+  }, [marginProfilesQuery.data])
+  const resolveParentKey = useCallback(
+    (categoryId?: string | null) => {
+      const normalized = categoryId?.trim()
+      if (!normalized) {
+        return undefined
+      }
+      const metaEntry = categoryMeta.get(normalized)
+      if (!metaEntry) {
+        return undefined
+      }
+      return metaEntry.parentKey
+    },
+    [categoryMeta],
+  )
+  const computeSuggestedUnitCost = useCallback(
+    (product?: Product | null) => {
+      if (!product) {
+        return ''
+      }
+      const basePrice = Number(product.price ?? 0)
+      if (!Number.isFinite(basePrice) || basePrice <= 0) {
+        return ''
+      }
+      const parentKey = resolveParentKey(product.categoryId)
+      const targetMarginPct = parentKey ? (marginLookup.get(parentKey) ?? 0) : 0
+      const cost = basePrice - basePrice * (targetMarginPct / 100)
+      if (!Number.isFinite(cost) || cost <= 0) {
+        return basePrice.toFixed(2)
+      }
+      return cost.toFixed(2)
+    },
+    [marginLookup, resolveParentKey],
+  )
 
   const syncMutation = useMutation({
     mutationFn: () => syncPurchaseOrders(page + 1, rowsPerPage),
@@ -94,6 +327,213 @@ export const PurchaseOrdersPage = () => {
       setSyncDisabled(true)
     },
   })
+  const products = useMemo<Product[]>(() => productsQuery.data ?? [], [productsQuery.data])
+  const productLookup = useMemo(() => {
+    const lookup = new Map<string, Product>()
+    products.forEach(product => lookup.set(product.id, product))
+    return lookup
+  }, [products])
+  const sortedProducts = useMemo(
+    () => products.slice().sort((a, b) => a.name.localeCompare(b.name)),
+    [products],
+  )
+  const productsBySupplier = useMemo(() => {
+    const map = new Map<string, Product[]>()
+    products.forEach(product => {
+      if (!product.supplierId) {
+        return
+      }
+      const list = map.get(product.supplierId) ?? []
+      list.push(product)
+      map.set(product.supplierId, list)
+    })
+    map.forEach(list => list.sort((a, b) => a.name.localeCompare(b.name)))
+    return map
+  }, [products])
+  const getProductsForSupplier = useCallback(
+    (supplierId: string) => {
+      if (!supplierId) {
+        return sortedProducts
+      }
+      const list = productsBySupplier.get(supplierId)
+      return list && list.length > 0 ? list : sortedProducts
+    },
+    [productsBySupplier, sortedProducts],
+  )
+  const createPoMutation = useMutation({
+    mutationFn: async (payloads: CreatePurchaseOrderRequest[]) => {
+      for (const payload of payloads) {
+        await createPurchaseOrder(payload)
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['purchase-orders-summary', 'all'] })
+      resetCreateForm()
+      setCreateDialogOpen(false)
+    },
+  })
+  const openCreateDialog = () => {
+    setCreateDialogOpen(true)
+    createPoMutation.reset()
+    setCreateFormError(null)
+  }
+
+  const closeCreateDialog = () => {
+    if (createPoMutation.isPending) {
+      return
+    }
+    setCreateDialogOpen(false)
+    setCreateFormError(null)
+    createPoMutation.reset()
+  }
+
+  const handleSupplierChange = (
+    orderIndex: number,
+    _event: SyntheticEvent<Element, Event>,
+    value: Supplier | null,
+  ) => {
+    scheduleFormUpdate(prev => {
+      const orders = prev.orders.slice()
+      orders[orderIndex] = {
+        ...orders[orderIndex],
+        supplierId: value?.id ?? '',
+        items: [createEmptyOrderItem()],
+      }
+      return { orders }
+    })
+    setCreateFormError(null)
+  }
+
+  const handleItemFieldChange = (
+    orderIndex: number,
+    itemIndex: number,
+    field: keyof PurchaseOrderItemForm,
+    value: string,
+  ) => {
+    scheduleFormUpdate(prev => {
+      const orders = prev.orders.slice()
+      const items = orders[orderIndex].items.slice()
+      items[itemIndex] = { ...items[itemIndex], [field]: value }
+      orders[orderIndex] = { ...orders[orderIndex], items }
+      return { orders }
+    })
+    setCreateFormError(null)
+  }
+
+  const handleProductChange = (orderIndex: number, itemIndex: number, productId: string) => {
+    scheduleFormUpdate(prev => {
+      const orders = prev.orders.slice()
+      const items = orders[orderIndex].items.slice()
+      const current = items[itemIndex]
+      const product = productLookup.get(productId)
+      items[itemIndex] = {
+        ...current,
+        productId,
+        unitCost: computeSuggestedUnitCost(product),
+      }
+      orders[orderIndex] = { ...orders[orderIndex], items }
+      return { orders }
+    })
+    setCreateFormError(null)
+  }
+
+  const addItemRow = (orderIndex: number) => {
+    scheduleFormUpdate(prev => {
+      const orders = prev.orders.slice()
+      const items = [...orders[orderIndex].items, createEmptyOrderItem()]
+      orders[orderIndex] = { ...orders[orderIndex], items }
+      return { orders }
+    })
+    setCreateFormError(null)
+  }
+
+  const removeItemRow = (orderIndex: number, itemIndex: number) => {
+    scheduleFormUpdate(prev => {
+      const orders = prev.orders.slice()
+      const currentItems = orders[orderIndex].items
+      if (currentItems.length === 1) {
+        return prev
+      }
+      const items = currentItems.filter((_, idx) => idx !== itemIndex)
+      orders[orderIndex] = { ...orders[orderIndex], items }
+      return { orders }
+    })
+    setCreateFormError(null)
+  }
+
+  const addSupplierOrder = () => {
+    scheduleFormUpdate(prev => ({
+      orders: [...prev.orders, createSupplierOrder()],
+    }))
+    setCreateFormError(null)
+  }
+
+  const removeSupplierOrder = (orderIndex: number) => {
+    scheduleFormUpdate(prev => {
+      if (prev.orders.length === 1) {
+        return prev
+      }
+      const orders = prev.orders.filter((_, idx) => idx !== orderIndex)
+      return { orders }
+    })
+    setCreateFormError(null)
+  }
+
+  const handleCreatePo = () => {
+    if (createPoMutation.isPending) {
+      return
+    }
+    if (createForm.orders.length === 0) {
+      setCreateFormError('Add at least one supplier before creating purchase orders.')
+      return
+    }
+    const payloads: CreatePurchaseOrderRequest[] = []
+    for (let orderIndex = 0; orderIndex < createForm.orders.length; orderIndex += 1) {
+      const order = createForm.orders[orderIndex]
+      if (!order.supplierId) {
+        setCreateFormError(`Select a supplier for block #${orderIndex + 1}.`)
+        return
+      }
+      if (order.items.length === 0) {
+        setCreateFormError(`Add at least one item for supplier #${orderIndex + 1}.`)
+        return
+      }
+      const normalizedItems: CreatePurchaseOrderItemRequest[] = []
+      for (const item of order.items) {
+        const qty = Number(item.qty)
+        const unitCost = Number(item.unitCost)
+        if (
+          !item.productId ||
+          !item.expectedDate ||
+          !Number.isInteger(qty) ||
+          qty <= 0 ||
+          Number.isNaN(unitCost) ||
+          unitCost <= 0
+        ) {
+          setCreateFormError('Please complete every item with valid quantities, costs, and date.')
+          return
+        }
+        normalizedItems.push({
+          productId: item.productId,
+          qty,
+          unitCost,
+          expectedDate: item.expectedDate,
+        })
+      }
+      payloads.push({
+        supplierId: order.supplierId,
+        items: normalizedItems,
+      })
+    }
+
+    if (payloads.length === 0) {
+      setCreateFormError('Add at least one supplier with valid items.')
+      return
+    }
+
+    setCreateFormError(null)
+    createPoMutation.mutate(payloads)
+  }
 
   const summaries = useMemo<PurchaseOrderSummary[]>(
     () => summaryQuery.data ?? [],
@@ -259,13 +699,23 @@ export const PurchaseOrdersPage = () => {
         subtitle="Auto-generate replenishment orders per supplier."
         action={
           <Stack spacing={0.5} alignItems="flex-end" textAlign="right">
-            <Button
-              variant="contained"
-              onClick={() => syncMutation.mutate()}
-              disabled={syncDisabled || syncMutation.isPending}
-            >
-              {syncMutation.isPending ? 'Syncing…' : 'Sync master data'}
-            </Button>
+            <Stack direction="row" spacing={1} flexWrap="wrap" justifyContent="flex-end">
+              <Button
+                variant="outlined"
+                startIcon={<AddCircleOutline />}
+                onClick={openCreateDialog}
+                disabled={createPoMutation.isPending}
+              >
+                Create purchase order
+              </Button>
+              <Button
+                variant="contained"
+                onClick={() => syncMutation.mutate()}
+                disabled={syncDisabled || syncMutation.isPending}
+              >
+                {syncMutation.isPending ? 'Syncing…' : 'Sync master data'}
+              </Button>
+            </Stack>
             {syncDisabled && (
               <Typography variant="caption" color="text.secondary">
                 Master data is already synced; new purchase orders will appear once upstream records
@@ -497,6 +947,344 @@ export const PurchaseOrdersPage = () => {
         }}
         rowsPerPageOptions={[10, 25, 50]}
       />
+
+      <Dialog
+        open={createDialogOpen}
+        onClose={closeCreateDialog}
+        disableEscapeKeyDown={createPoMutation.isPending}
+        fullWidth
+        maxWidth="md"
+      >
+        <DialogTitle
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            pr: 3,
+            gap: 2,
+          }}
+        >
+          <Typography variant="h6">Create purchase order</Typography>
+          <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+            <Chip label="Draft autosaved" color="info" size="small" variant="outlined" />
+            <Button
+              size="small"
+              color="inherit"
+              onClick={discardDraft}
+              disabled={createPoMutation.isPending}
+            >
+              Discard draft
+            </Button>
+          </Stack>
+        </DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={2.5}>
+            <Stack spacing={3}>
+              {createForm.orders.map((order, orderIndex) => {
+                const supplierRecord =
+                  suppliers.find(supplier => supplier.id === order.supplierId) ?? null
+                const productOptions = getProductsForSupplier(order.supplierId)
+                const supplierTotal = getSupplierTotal(order)
+                return (
+                  <Box
+                    key={order.id}
+                    sx={{
+                      border: '1px dashed',
+                      borderColor: order.supplierId ? 'primary.main' : 'divider',
+                      backgroundColor: theme =>
+                        alpha(theme.palette.primary.main, order.supplierId ? 0.07 : 0.03),
+                      borderRadius: 2,
+                      p: 3,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 2,
+                    }}
+                  >
+                    <Stack
+                      direction={{ xs: 'column', md: 'row' }}
+                      justifyContent="space-between"
+                      alignItems={{ xs: 'flex-start', md: 'center' }}
+                      spacing={1.5}
+                    >
+                      <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+                        <Chip
+                          label={`Supplier #${orderIndex + 1}`}
+                          color={order.supplierId ? 'primary' : 'default'}
+                          variant="outlined"
+                          size="small"
+                        />
+                        {supplierRecord && (
+                          <Chip
+                            label={supplierRecord.name}
+                            color="success"
+                            size="small"
+                            variant="outlined"
+                          />
+                        )}
+                      </Stack>
+                      <Stack direction="row" spacing={1} alignItems="center">
+                        <Typography variant="body2" color="text.secondary">
+                          Total
+                        </Typography>
+                        <Chip
+                          label={currencyFormatter.format(supplierTotal)}
+                          color="secondary"
+                          variant="filled"
+                          size="small"
+                        />
+                        {createForm.orders.length > 1 && (
+                          <IconButton
+                            size="small"
+                            color="warning"
+                            onClick={() => removeSupplierOrder(orderIndex)}
+                          >
+                            <DeleteOutline fontSize="small" />
+                          </IconButton>
+                        )}
+                      </Stack>
+                    </Stack>
+
+                    <BaseAutocomplete
+                      options={suppliers}
+                      value={supplierRecord}
+                      onChange={(
+                        event: SyntheticEvent<Element, Event>,
+                        supplier: Supplier | null,
+                      ) => handleSupplierChange(orderIndex, event, supplier)}
+                      getOptionLabel={(option: Supplier) => option.name}
+                      isOptionEqualToValue={(option: Supplier, value: Supplier) =>
+                        option.id === value.id
+                      }
+                      renderInput={(params: AutocompleteRenderInputParams) => (
+                        <TextField
+                          {...params}
+                          label="Supplier"
+                          placeholder="Select supplier"
+                          size="small"
+                        />
+                      )}
+                      loading={isSupplierLoading}
+                    />
+
+                    <Stack spacing={2}>
+                      {order.items.map((item, itemIndex) => {
+                        const itemTotal = computeItemTotal(item)
+                        return (
+                          <Box
+                            key={`${order.id}-item-${itemIndex}`}
+                            sx={{
+                              border: '1px solid',
+                              borderColor: 'divider',
+                              borderRadius: 2,
+                              p: 2,
+                              backgroundColor: 'background.paper',
+                            }}
+                          >
+                            <Stack
+                              direction="row"
+                              justifyContent="space-between"
+                              alignItems="center"
+                              mb={2}
+                              spacing={1}
+                            >
+                              <Stack direction="row" spacing={1} alignItems="center">
+                                <Chip
+                                  label={`Item ${itemIndex + 1}`}
+                                  color="secondary"
+                                  size="small"
+                                  variant="outlined"
+                                />
+                                {item.productId && (
+                                  <Chip
+                                    label={productLookup.get(item.productId)?.skuCode ?? 'SKU'}
+                                    size="small"
+                                  />
+                                )}
+                              </Stack>
+                              <Stack direction="row" spacing={1} alignItems="center">
+                                <Typography variant="body2" color="text.secondary">
+                                  Line total
+                                </Typography>
+                                <Chip
+                                  label={currencyFormatter.format(itemTotal)}
+                                  color="info"
+                                  variant="outlined"
+                                  size="small"
+                                />
+                                {order.items.length > 1 && (
+                                  <IconButton
+                                    size="small"
+                                    onClick={() => removeItemRow(orderIndex, itemIndex)}
+                                  >
+                                    <DeleteOutline fontSize="small" />
+                                  </IconButton>
+                                )}
+                              </Stack>
+                            </Stack>
+
+                            <Box
+                              sx={{
+                                display: 'grid',
+                                gap: 2,
+                                gridTemplateColumns: {
+                                  xs: '1fr',
+                                  md: '2fr repeat(3, minmax(130px, 1fr))',
+                                },
+                              }}
+                            >
+                              <BaseAutocomplete
+                                options={productOptions}
+                                value={productLookup.get(item.productId) ?? null}
+                                onChange={(
+                                  _event: SyntheticEvent<Element, Event>,
+                                  product: Product | null,
+                                ) => handleProductChange(orderIndex, itemIndex, product?.id ?? '')}
+                                getOptionLabel={(option: Product) =>
+                                  `${option.name} · ${option.skuCode}`.trim()
+                                }
+                                isOptionEqualToValue={(option: Product, value: Product) =>
+                                  option.id === value.id
+                                }
+                                renderInput={(params: AutocompleteRenderInputParams) => (
+                                  <TextField
+                                    {...params}
+                                    label="Product"
+                                    size="small"
+                                    placeholder={
+                                      order.supplierId ? 'Select product' : 'Select supplier'
+                                    }
+                                  />
+                                )}
+                                loading={productsQuery.isFetching}
+                                disabled={!order.supplierId || productsQuery.isLoading}
+                              />
+                              <TextField
+                                label="Unit cost"
+                                type="number"
+                                size="small"
+                                value={item.unitCost}
+                                onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                                  handleItemFieldChange(
+                                    orderIndex,
+                                    itemIndex,
+                                    'unitCost',
+                                    event.target.value,
+                                  )
+                                }
+                                inputProps={{ min: 0, step: '0.01' }}
+                              />
+                              <TextField
+                                label="Quantity"
+                                type="number"
+                                size="small"
+                                value={item.qty}
+                                onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                                  handleItemFieldChange(
+                                    orderIndex,
+                                    itemIndex,
+                                    'qty',
+                                    event.target.value,
+                                  )
+                                }
+                                inputProps={{ min: 1 }}
+                              />
+                              <TextField
+                                label="Expected date"
+                                type="date"
+                                size="small"
+                                value={item.expectedDate}
+                                onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                                  handleItemFieldChange(
+                                    orderIndex,
+                                    itemIndex,
+                                    'expectedDate',
+                                    event.target.value,
+                                  )
+                                }
+                                InputLabelProps={{ shrink: true }}
+                              />
+                            </Box>
+                          </Box>
+                        )
+                      })}
+                      <Button
+                        variant="outlined"
+                        startIcon={<AddCircleOutline />}
+                        onClick={() => addItemRow(orderIndex)}
+                        sx={{ alignSelf: { xs: 'stretch', md: 'flex-start' } }}
+                      >
+                        Add item for supplier #{orderIndex + 1}
+                      </Button>
+                    </Stack>
+                  </Box>
+                )
+              })}
+              <Box
+                sx={{
+                  border: '1px dashed',
+                  borderColor: 'divider',
+                  borderRadius: 2,
+                  p: 3,
+                  display: 'flex',
+                  justifyContent: 'center',
+                  backgroundColor: theme => alpha(theme.palette.info.main, 0.05),
+                }}
+              >
+                <Button
+                  variant="outlined"
+                  startIcon={<AddCircleOutline />}
+                  onClick={addSupplierOrder}
+                >
+                  Add supplier
+                </Button>
+              </Box>
+            </Stack>
+
+            {createFormError && <Alert severity="warning">{createFormError}</Alert>}
+            {createPoMutation.isError && (
+              <Alert severity="error">
+                {createPoMutation.error instanceof Error
+                  ? createPoMutation.error.message
+                  : 'Unable to create purchase order. Please try again.'}
+              </Alert>
+            )}
+          </Stack>
+        </DialogContent>
+        <DialogActions
+          sx={{
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: 2,
+            pl: { xs: 0, md: 2 },
+            pr: { xs: 0, md: 2 },
+          }}
+        >
+          <Stack direction="row" spacing={1} alignItems="center">
+            <Typography variant="subtitle2" color="text.secondary">
+              Total purchase order value
+            </Typography>
+            <Chip
+              label={currencyFormatter.format(formGrandTotal)}
+              color="primary"
+              size="medium"
+              sx={{ fontSize: '1rem', fontWeight: 600, px: 2, py: 0.5 }}
+            />
+          </Stack>
+          <Stack direction="row" spacing={1}>
+            <Button onClick={closeCreateDialog} disabled={createPoMutation.isPending}>
+              Cancel
+            </Button>
+            <Button
+              variant="contained"
+              onClick={handleCreatePo}
+              disabled={createPoMutation.isPending}
+            >
+              {createPoMutation.isPending ? 'Creating…' : 'Create purchase order'}
+            </Button>
+          </Stack>
+        </DialogActions>
+      </Dialog>
     </Stack>
   )
 }
