@@ -1,23 +1,26 @@
 import { apiClient } from './client'
-import type {
-  InventoryAdjustmentApiResponse,
-  InventoryAdjustmentRequest,
-  InventoryAdjustmentResponse,
-  InventoryLedger,
-} from '../types/inventory'
-import { unwrap } from './helpers'
+import { unwrapPage } from './helpers'
+import type { PageResponse } from '../types/common'
+import type { InventoryProductSummary, InventoryProductSummaryPage } from '../types/inventory'
 
-export const getInventoryLedger = async (productId: string): Promise<InventoryLedger> => {
-  const { data } = await apiClient.get<InventoryLedger>(`/api/inventory/${productId}`)
-  return data
+type InventorySummaryResponse = PageResponse<InventoryProductSummary>
+
+export const syncInventory = async (
+  pageNum: number,
+  pageSize: number,
+): Promise<InventoryProductSummaryPage> => {
+  const { data } = await apiClient.post<InventorySummaryResponse>('/api/inventory/sync', null, {
+    params: { pageNum, pageSize },
+  })
+  return unwrapPage(data)
 }
 
-export const adjustInventory = async (
-  payload: InventoryAdjustmentRequest,
-): Promise<InventoryAdjustmentResponse> => {
-  const { data } = await apiClient.post<InventoryAdjustmentApiResponse>(
-    '/api/inventory/adjustments',
-    payload,
-  )
-  return unwrap(data)
+export const listInventorySummary = async (
+  pageNum: number,
+  pageSize: number,
+): Promise<InventoryProductSummaryPage> => {
+  const { data } = await apiClient.get<InventorySummaryResponse>('/api/inventory/summary', {
+    params: { pageNum, pageSize },
+  })
+  return unwrapPage(data)
 }

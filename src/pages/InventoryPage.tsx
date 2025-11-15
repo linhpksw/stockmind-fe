@@ -1,222 +1,283 @@
+import KeyboardArrowDown from '@mui/icons-material/KeyboardArrowDown'
+import KeyboardArrowRight from '@mui/icons-material/KeyboardArrowRight'
 import {
   Alert,
+  Avatar,
+  Box,
   Button,
-  Card,
-  CardContent,
-  Divider,
-  Grid,
+  Chip,
+  IconButton,
+  Paper,
   Stack,
   Table,
   TableBody,
   TableCell,
+  TableContainer,
   TableHead,
+  TablePagination,
   TableRow,
-  TextField,
   Typography,
 } from '@mui/material'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import type { ChangeEvent } from 'react'
-import { useState } from 'react'
-import { adjustInventory, getInventoryLedger } from '../api/inventory'
+import { Fragment, useEffect, useMemo, useState } from 'react'
+import { listInventorySummary, syncInventory } from '../api/inventory'
 import { SectionHeading } from '../components/common/SectionHeading'
-import { useAuthStore } from '../stores/auth-store'
-import { useSearchStore } from '../stores/search-store'
+import type { InventoryProductSummary } from '../types/inventory'
 import { formatDateTime } from '../utils/formatters'
 
+const currencyFormatter = new Intl.NumberFormat('vi-VN', {
+  style: 'currency',
+  currency: 'VND',
+  minimumFractionDigits: 0,
+})
+
 export const InventoryPage = () => {
-  const [productIdInput, setProductIdInput] = useState('')
-  const [activeProductId, setActiveProductId] = useState('')
-  const actorId = useAuthStore(state => state.user?.userId ?? 0)
-  const globalSearch = useSearchStore(state => state.query).toLowerCase()
+  const [expanded, setExpanded] = useState<Record<number, boolean>>({})
+  const [page, setPage] = useState(0)
+  const [rowsPerPage, setRowsPerPage] = useState(10)
   const queryClient = useQueryClient()
 
-  const ledgerQuery = useQuery({
-    queryKey: ['inventory-ledger', activeProductId],
-    queryFn: () => getInventoryLedger(activeProductId),
-    enabled: Boolean(activeProductId),
+  const summaryQuery = useQuery({
+    queryKey: ['inventory-summary', page, rowsPerPage],
+    queryFn: () => listInventorySummary(page + 1, rowsPerPage),
   })
 
-  const adjustmentMutation = useMutation({
-    mutationFn: adjustInventory,
-    onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['inventory-ledger', variables.productId] })
+  const syncMutation = useMutation({
+    mutationFn: () => syncInventory(page + 1, rowsPerPage),
+    onSuccess: data => {
+      queryClient.setQueryData(['inventory-summary', page, rowsPerPage], data)
+      setExpanded({})
     },
   })
 
-  const handleLookup = (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    setActiveProductId(productIdInput.trim())
+  const summaries = useMemo<InventoryProductSummary[]>(
+    () => summaryQuery.data?.data ?? [],
+    [summaryQuery.data],
+  )
+  const totalRows = summaryQuery.data?.total ?? 0
+
+  useEffect(() => {
+    setExpanded({})
+  }, [page, rowsPerPage])
+
+  const toggleRow = (productId: number) => {
+    setExpanded(prev => ({ ...prev, [productId]: !prev[productId] }))
   }
 
-  const handleProductIdChange = (event: ChangeEvent<HTMLInputElement>) => {
-    setProductIdInput(event.target.value)
-  }
+  const badgePalette = ['#1e88e5', '#7b1fa2', '#00897b', '#f4511e', '#6d4c41']
 
-  const handleAdjustmentSubmit = (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    if (!activeProductId) return
+  const getBadgeStyles = (key: string) => {
+    const baseColor = key
+      ? badgePalette[
+          key
+            .trim()
+            .toLowerCase()
+            .split('')
+            .reduce((acc, char) => acc + char.charCodeAt(0), 0) % badgePalette.length
+        ]
+      : '#546e7a'
 
-    const formData = new FormData(event.currentTarget)
-    const payload = {
-      productId: activeProductId,
-      lotId: (formData.get('lotId') as string) || undefined,
-      qtyDelta: Number(formData.get('qtyDelta')),
-      reason: String(formData.get('reason')),
-      actorId,
+    return {
+      bgcolor: baseColor,
+      color: '#fff',
+      border: 'none',
+      fontWeight: 500,
+      letterSpacing: 0.2,
     }
-    adjustmentMutation.mutate(payload)
-    event.currentTarget.reset()
   }
 
-  const lots = ledgerQuery.data?.lots ?? []
-  const movementSource =
-    ledgerQuery.data?.movements && ledgerQuery.data.movements.length > 0
-      ? ledgerQuery.data.movements
-      : ledgerQuery.data?.recentMovements ?? []
-  const filteredMovements = movementSource.filter(movement =>
-      `${movement.id}${movement.type}${movement.lotId ?? ''}${movement.refType ?? ''}`
-        .toLowerCase()
-        .includes(globalSearch),
-    )
+  const renderLots = (product: InventoryProductSummary) => (
+    <Box sx={{ backgroundColor: 'grey.50', borderRadius: 2, p: 2 }}>
+      {product.lots.length === 0 ? (
+        <Typography color="text.secondary">No lots received yet.</Typography>
+      ) : (
+        <Stack spacing={1.5}>
+          {product.lots.map(lot => (
+            <Stack
+              key={lot.lotId}
+              direction={{ xs: 'column', md: 'row' }}
+              spacing={2}
+              sx={{
+                p: 1.5,
+                borderRadius: 1,
+                border: '1px solid',
+                borderColor: 'divider',
+                justifyContent: 'space-between',
+              }}
+            >
+              <Box>
+                <Typography fontWeight={600}>{lot.lotCode}</Typography>
+                <Typography variant="caption" color="text.secondary">
+                  Received {lot.receivedAt ? formatDateTime(lot.receivedAt) : 'n/a'}
+                </Typography>
+              </Box>
+              <Stack direction="row" spacing={3}>
+                <Box>
+                  <Typography variant="caption" color="text.secondary">
+                    Qty on hand
+                  </Typography>
+                  <Typography fontWeight={600}>{lot.qtyOnHand}</Typography>
+                </Box>
+                <Box>
+                  <Typography variant="caption" color="text.secondary">
+                    Expiry
+                  </Typography>
+                  <Typography fontWeight={600}>
+                    {lot.expiryDate ? formatDateTime(lot.expiryDate) : '—'}
+                  </Typography>
+                </Box>
+                <Box>
+                  <Typography variant="caption" color="text.secondary">
+                    Unit cost
+                  </Typography>
+                  <Typography fontWeight={700} color="success.main">
+                    {currencyFormatter.format(lot.unitCost)}
+                  </Typography>
+                </Box>
+              </Stack>
+            </Stack>
+          ))}
+        </Stack>
+      )}
+    </Box>
+  )
 
   return (
-    <Stack spacing={4}>
+    <Stack spacing={3}>
       <SectionHeading
-        title="Inventory workspace"
-        subtitle="Find a product, inspect lots, and perform stock adjustments."
-      />
-      <Card>
-        <CardContent>
-          <Stack
-            direction={{ xs: 'column', sm: 'row' }}
-            spacing={2}
-            component="form"
-            onSubmit={handleLookup}
-          >
-            <TextField
-              label="Product ID"
-              value={productIdInput}
-              onChange={handleProductIdChange}
-              required
-            />
-            <Button type="submit" variant="contained" size="large">
-              Load ledger
+        title="Inventory (lots)"
+        subtitle="Review received stock grouped by product."
+        action={
+          <Stack spacing={0.5} alignItems="flex-end" textAlign="right">
+            <Button variant="contained" disabled>
+              Sync inventory
             </Button>
+            <Typography variant="caption" color="text.secondary">
+              No new GRN receipts are waiting, so sync is temporarily paused.
+            </Typography>
           </Stack>
-        </CardContent>
-      </Card>
+        }
+      />
 
-      {ledgerQuery.isError && <Alert severity="error">Unable to load product ledger.</Alert>}
+      {syncMutation.isError && <Alert severity="error">Unable to sync inventory snapshot.</Alert>}
+      {summaryQuery.isError && <Alert severity="error">Failed to load inventory snapshot.</Alert>}
 
-      {ledgerQuery.data && (
-        <Grid container spacing={3}>
-          <Grid item xs={12} md={6}>
-            <Card>
-              <CardContent>
-                <SectionHeading
-                  title={`Lots for product ${ledgerQuery.data.productId}`}
-                  subtitle={`On hand: ${ledgerQuery.data.onHand}`}
-                />
-                <Table size="small">
-                  <TableHead>
+      <TableContainer component={Paper}>
+        <Table size="small">
+          <TableHead>
+            <TableRow>
+              <TableCell width="60px">No.</TableCell>
+              <TableCell>Product</TableCell>
+              <TableCell align="center">Category</TableCell>
+              <TableCell align="center">Supplier</TableCell>
+              <TableCell align="right">On hand</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {summaryQuery.isLoading ? (
+              <TableRow>
+                <TableCell colSpan={5}>
+                  <Typography textAlign="center" py={3}>
+                    Loading inventory…
+                  </Typography>
+                </TableCell>
+              </TableRow>
+            ) : summaries.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={5}>
+                  <Box py={4} textAlign="center">
+                    <Typography variant="h6">No inventory available</Typography>
+                    <Typography color="text.secondary">
+                      Receive purchase orders to populate stock levels.
+                    </Typography>
+                  </Box>
+                </TableCell>
+              </TableRow>
+            ) : (
+              summaries.map((product, index) => {
+                const isExpanded = !!expanded[product.productId]
+                return (
+                  <Fragment key={product.productId}>
                     <TableRow>
-                      <TableCell>Lot ID</TableCell>
-                      <TableCell align="right">Qty</TableCell>
-                      <TableCell>Received</TableCell>
-                      <TableCell>Expiry</TableCell>
+                      <TableCell>
+                        <Typography fontWeight={600}>{page * rowsPerPage + index + 1}</Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Stack direction="row" spacing={1} alignItems="center">
+                          <IconButton size="small" onClick={() => toggleRow(product.productId)}>
+                            {isExpanded ? (
+                              <KeyboardArrowDown fontSize="small" />
+                            ) : (
+                              <KeyboardArrowRight fontSize="small" />
+                            )}
+                          </IconButton>
+                          {product.mediaUrl ? (
+                            <Avatar src={product.mediaUrl} alt={product.name} variant="rounded" />
+                          ) : (
+                            <Avatar variant="rounded">
+                              {product.name.slice(0, 2).toUpperCase()}
+                            </Avatar>
+                          )}
+                          <Box>
+                            <Typography fontWeight={600}>{product.name}</Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              {product.skuCode} · {product.uom}
+                            </Typography>
+                          </Box>
+                        </Stack>
+                      </TableCell>
+                      <TableCell align="center">
+                        {product.categoryName ? (
+                          <Chip
+                            size="small"
+                            label={product.categoryName}
+                            sx={getBadgeStyles(product.categoryName)}
+                          />
+                        ) : (
+                          <Typography color="text.secondary">—</Typography>
+                        )}
+                      </TableCell>
+                      <TableCell align="center">
+                        {product.supplierName ? (
+                          <Chip
+                            size="small"
+                            label={product.supplierName}
+                            sx={getBadgeStyles(product.supplierName)}
+                          />
+                        ) : (
+                          <Typography color="text.secondary">—</Typography>
+                        )}
+                      </TableCell>
+                      <TableCell align="right">
+                        <Typography fontWeight={600}>{product.onHand.toFixed(2)}</Typography>
+                      </TableCell>
                     </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {lots.map(lot => (
-                      <TableRow key={lot.lotId}>
-                        <TableCell>{lot.lotId}</TableCell>
-                        <TableCell align="right">{lot.qtyOnHand}</TableCell>
-                        <TableCell>{formatDateTime(lot.receivedAt)}</TableCell>
-                        <TableCell>{formatDateTime(lot.expiryDate)}</TableCell>
-                      </TableRow>
-                    ))}
-                    {lots.length === 0 && (
+                    {isExpanded && (
                       <TableRow>
-                        <TableCell colSpan={4}>
-                          <Typography color="text.secondary">No lots found.</Typography>
+                        <TableCell colSpan={5} sx={{ backgroundColor: 'grey.50' }}>
+                          {renderLots(product)}
                         </TableCell>
                       </TableRow>
                     )}
-                  </TableBody>
-                </Table>
-              </CardContent>
-            </Card>
-          </Grid>
-          <Grid item xs={12} md={6}>
-            <Card>
-              <CardContent>
-                <SectionHeading title="Adjust inventory" />
-                <Stack spacing={2} component="form" onSubmit={handleAdjustmentSubmit}>
-                  <TextField name="lotId" label="Lot ID (optional)" />
-                  <TextField
-                    name="qtyDelta"
-                    label="Quantity delta"
-                    type="number"
-                    required
-                    inputProps={{ step: '0.01' }}
-                  />
-                  <TextField name="reason" label="Reason" required />
-                  {adjustmentMutation.isError && (
-                    <Alert severity="error">
-                      {adjustmentMutation.error instanceof Error
-                        ? adjustmentMutation.error.message
-                        : 'Adjustment failed'}
-                    </Alert>
-                  )}
-                  <Button type="submit" variant="contained" disabled={adjustmentMutation.isPending}>
-                    {adjustmentMutation.isPending ? 'Applying...' : 'Apply adjustment'}
-                  </Button>
-                </Stack>
-              </CardContent>
-            </Card>
-          </Grid>
-        </Grid>
-      )}
-
-      {ledgerQuery.data && (
-        <Card>
-          <CardContent>
-            <SectionHeading title="Recent movements" subtitle="Latest 50 transactions." />
-            <Divider sx={{ mb: 2 }} />
-            <Table size="small">
-              <TableHead>
-                <TableRow>
-                  <TableCell>ID</TableCell>
-                  <TableCell>Type</TableCell>
-                  <TableCell align="right">Qty</TableCell>
-                  <TableCell>Lot</TableCell>
-                  <TableCell>Reference</TableCell>
-                  <TableCell>At</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {filteredMovements.map(movement => (
-                  <TableRow key={movement.id}>
-                    <TableCell>{movement.id}</TableCell>
-                    <TableCell>{movement.type}</TableCell>
-                    <TableCell align="right">{movement.qty}</TableCell>
-                    <TableCell>{movement.lotId ?? '-'}</TableCell>
-                    <TableCell>{movement.refType ?? '-'}</TableCell>
-                    <TableCell>{formatDateTime(movement.at)}</TableCell>
-                  </TableRow>
-                ))}
-                {filteredMovements.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={6}>
-                      <Typography color="text.secondary">No movements match the filter.</Typography>
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
-      )}
+                  </Fragment>
+                )
+              })
+            )}
+          </TableBody>
+        </Table>
+      </TableContainer>
+      <TablePagination
+        component="div"
+        count={totalRows}
+        page={page}
+        onPageChange={(_event, newPage) => setPage(newPage)}
+        rowsPerPage={rowsPerPage}
+        onRowsPerPageChange={event => {
+          setRowsPerPage(parseInt(event.target.value, 10))
+          setPage(0)
+        }}
+        rowsPerPageOptions={[10, 25, 50]}
+      />
     </Stack>
   )
 }

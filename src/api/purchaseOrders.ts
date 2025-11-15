@@ -1,13 +1,26 @@
 import { apiClient } from './client'
-import type { CreatePoRequest, PoDto, PoResponse } from '../types/purchaseOrders'
-import { unwrap } from './helpers'
+import { unwrapPage } from './helpers'
+import type { PageResponse } from '../types/common'
+import type { PurchaseOrderSummary, PurchaseOrderSummaryPage } from '../types/purchaseOrders'
 
-export const createPurchaseOrder = async (payload: CreatePoRequest): Promise<PoDto> => {
-  const { data } = await apiClient.post<PoResponse>('/api/pos', payload)
-  return unwrap(data)
+type PurchaseOrderSummaryResponse = PageResponse<PurchaseOrderSummary>
+
+export const syncPurchaseOrders = async (
+  pageNum: number,
+  pageSize: number,
+): Promise<PurchaseOrderSummaryPage> => {
+  const { data } = await apiClient.post<PurchaseOrderSummaryResponse>('/api/pos/sync', null, {
+    params: { pageNum, pageSize },
+  })
+  return unwrapPage(data)
 }
 
-export const getPurchaseOrder = async (id: number): Promise<PoDto> => {
-  const { data } = await apiClient.get<PoResponse>(`/api/pos/${id}`)
-  return unwrap(data)
+export const listPurchaseOrderSummary = async (
+  pageNum: number,
+  pageSize: number,
+): Promise<PurchaseOrderSummaryPage> => {
+  const { data } = await apiClient.get<PurchaseOrderSummaryResponse>('/api/pos/summary', {
+    params: { pageNum, pageSize },
+  })
+  return unwrapPage(data)
 }

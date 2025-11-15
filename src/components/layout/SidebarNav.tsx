@@ -10,35 +10,32 @@ import {
   Warehouse,
 } from '@mui/icons-material'
 import {
+  Avatar,
   Box,
+  Button,
   Divider,
   Drawer,
   List,
   ListItemButton,
   ListItemIcon,
   ListItemText,
+  Stack,
   Typography,
 } from '@mui/material'
-import { useMemo } from 'react'
+import { useMemo, useCallback } from 'react'
 import type { ReactNode } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
-import { listSuppliers } from '../../api/suppliers'
-import { fetchCategories } from '../../api/categories'
-import { listProducts } from '../../api/products'
-import { listMarginProfiles } from '../../api/margins'
 import { SIDEBAR_WIDTH } from '../../constants/layout'
+import { useAuthStore } from '../../stores/auth-store'
 
-type MasterDataStatusKey = 'suppliers' | 'categories' | 'products' | 'margins'
-
-type MasterDataStatus = Record<MasterDataStatusKey, boolean>
-
-const DEFAULT_STATUS: MasterDataStatus = {
-  suppliers: false,
-  categories: false,
-  products: false,
-  margins: false,
-}
+type MasterDataStatusKey =
+  | 'suppliers'
+  | 'categories'
+  | 'products'
+  | 'margins'
+  | 'purchaseOrders'
+  | 'receiving'
+  | 'inventory'
 
 type NavItem = {
   label: string
@@ -78,49 +75,30 @@ const NAV_ITEMS: NavItem[] = [
     sequence: 'S4',
     statusKey: 'margins',
   },
-  { label: 'Inventory', path: '/app/inventory', icon: <Warehouse fontSize="small" /> },
   {
     label: 'Purchase Orders',
     path: '/app/purchase-orders',
     icon: <ShoppingCart fontSize="small" />,
+    sequence: 'S5',
+    statusKey: 'purchaseOrders',
   },
-  { label: 'Receiving (GRN)', path: '/app/receiving', icon: <ReceiptLong fontSize="small" /> },
+  {
+    label: 'Receiving (GRN)',
+    path: '/app/receiving',
+    icon: <ReceiptLong fontSize="small" />,
+    sequence: 'S6',
+    statusKey: 'receiving',
+  },
+  {
+    label: 'Inventory',
+    path: '/app/inventory',
+    icon: <Warehouse fontSize="small" />,
+    sequence: 'S7',
+    statusKey: 'inventory',
+  },
   { label: 'Markdowns', path: '/app/markdowns', icon: <Inventory2 fontSize="small" /> },
   { label: 'Waste', path: '/app/waste', icon: <Recycling fontSize="small" /> },
 ]
-
-const useMasterDataStatus = () => {
-  return useQuery({
-    queryKey: ['master-data-status'],
-    queryFn: async (): Promise<MasterDataStatus> => {
-      const [suppliersResult, categoriesResult, productsResult, marginsResult] =
-        await Promise.allSettled([
-          listSuppliers({ pageNum: 1, pageSize: 1 }),
-          fetchCategories(),
-          listProducts(),
-          listMarginProfiles(),
-        ])
-
-      const status: MasterDataStatus = { ...DEFAULT_STATUS }
-
-      if (suppliersResult.status === 'fulfilled') {
-        status.suppliers = suppliersResult.value.data.length > 0
-      }
-      if (categoriesResult.status === 'fulfilled') {
-        status.categories = categoriesResult.value.length > 0
-      }
-      if (productsResult.status === 'fulfilled') {
-        status.products = productsResult.value.length > 0
-      }
-      if (marginsResult.status === 'fulfilled') {
-        status.margins = marginsResult.value.length > 0
-      }
-
-      return status
-    },
-    staleTime: 5 * 60 * 1000,
-  })
-}
 
 interface SidebarNavProps {
   mobileOpen: boolean
@@ -130,12 +108,22 @@ interface SidebarNavProps {
 export const SidebarNav = ({ mobileOpen, onClose }: SidebarNavProps) => {
   const location = useLocation()
   const navigate = useNavigate()
-  const { data: masterDataStatus } = useMasterDataStatus()
+  const { user, logout } = useAuthStore()
+  const handleLogout = useCallback(() => {
+    logout()
+    navigate('/login', { replace: true })
+  }, [logout, navigate])
+  const initials =
+    user?.fullName
+      ?.split(' ')
+      .map(n => n[0])
+      .join('')
+      .slice(0, 2) || 'AD'
 
   const content = useMemo(
     () => (
       <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-        <Box px={3} py={4}>
+        <Box px={3} py={3}>
           <Typography variant="h5" fontWeight={700}>
             StockMind
           </Typography>
@@ -147,7 +135,6 @@ export const SidebarNav = ({ mobileOpen, onClose }: SidebarNavProps) => {
         <List sx={{ flexGrow: 1 }}>
           {NAV_ITEMS.map(item => {
             const active = location.pathname === item.path
-            const isCompleted = item.statusKey ? masterDataStatus?.[item.statusKey] : false
             return (
               <ListItemButton
                 key={item.path}
@@ -167,7 +154,10 @@ export const SidebarNav = ({ mobileOpen, onClose }: SidebarNavProps) => {
               >
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                   <ListItemIcon sx={{ minWidth: 36 }}>{item.icon}</ListItemIcon>
-                  <ListItemText primary={item.label} />
+                  <ListItemText
+                    primary={item.label}
+                    primaryTypographyProps={{ noWrap: true, sx: { fontSize: 14 } }}
+                  />
                 </Box>
                 {item.sequence && (
                   <Box
@@ -175,18 +165,9 @@ export const SidebarNav = ({ mobileOpen, onClose }: SidebarNavProps) => {
                       borderRadius: '50%',
                       width: 30,
                       height: 30,
-                      bgcolor: theme =>
-                        isCompleted
-                          ? theme.palette.success.main
-                          : active
-                            ? theme.palette.primary.main
-                            : theme.palette.grey[200],
-                      color: theme =>
-                        isCompleted
-                          ? theme.palette.success.contrastText
-                          : active
-                            ? theme.palette.primary.contrastText
-                            : theme.palette.text.secondary,
+                      whiteSpace: 'nowrap',
+                      bgcolor: active ? 'primary.main' : 'grey.200',
+                      color: active ? 'primary.contrastText' : 'text.secondary',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
@@ -201,14 +182,29 @@ export const SidebarNav = ({ mobileOpen, onClose }: SidebarNavProps) => {
             )
           })}
         </List>
-        <Box px={3} py={2}>
-          <Typography variant="caption" color="text.secondary">
-            v{import.meta.env.VITE_APP_VERSION ?? '0.1.0'}
-          </Typography>
+        <Divider />
+        <Box px={3} py={3} borderTop="1px solid" borderColor="divider">
+          <Stack spacing={1.5}>
+            <Stack direction="row" spacing={1.5} alignItems="center">
+              <Avatar sx={{ width: 44, height: 44 }}>{initials}</Avatar>
+              <Box>
+                <Typography fontWeight={700}>{user?.fullName ?? 'Administrator'}</Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {user?.roles?.join(', ') || 'ADMIN'}
+                </Typography>
+              </Box>
+            </Stack>
+            <Button variant="outlined" size="small" onClick={handleLogout}>
+              Logout
+            </Button>
+            <Typography variant="caption" color="text.secondary">
+              v{import.meta.env.VITE_APP_VERSION ?? '0.1.0'}
+            </Typography>
+          </Stack>
         </Box>
       </Box>
     ),
-    [location.pathname, masterDataStatus, navigate, onClose],
+    [handleLogout, initials, location.pathname, navigate, onClose, user?.fullName, user?.roles],
   )
 
   return (
