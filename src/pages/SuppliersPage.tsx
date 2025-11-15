@@ -1,6 +1,8 @@
 import AddIcon from '@mui/icons-material/Add'
 import DownloadIcon from '@mui/icons-material/Download'
 import FilterAltIcon from '@mui/icons-material/FilterAlt'
+import KeyboardArrowDown from '@mui/icons-material/KeyboardArrowDown'
+import KeyboardArrowRight from '@mui/icons-material/KeyboardArrowRight'
 import ShoppingCartCheckoutIcon from '@mui/icons-material/ShoppingCartCheckout'
 import UploadFileIcon from '@mui/icons-material/UploadFile'
 import Autocomplete from '@mui/material/Autocomplete'
@@ -14,6 +16,7 @@ import {
   DialogContent,
   DialogTitle,
   Grid,
+  IconButton,
   Paper,
   Skeleton,
   Table,
@@ -29,11 +32,20 @@ import {
 } from '@mui/material'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { ChangeEvent, FormEvent, SyntheticEvent } from 'react'
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactElement,
+} from 'react'
 import { useNavigate } from 'react-router-dom'
 import { listProducts } from '../api/products'
 import { createSupplier, fetchAllSuppliers, importSuppliers } from '../api/suppliers'
 import { fetchCategories } from '../api/categories'
+import { listMarginProfiles } from '../api/margins'
 import { SectionHeading } from '../components/common/SectionHeading'
 import { exportRowsToXlsx, parseFirstSheet } from '../lib/xlsx'
 import { useSearchStore } from '../stores/search-store'
@@ -61,6 +73,18 @@ type MultiSelectAutocompleteProps<T> = {
 const MultiSelectAutocomplete = <T,>(props: MultiSelectAutocompleteProps<T>) => (
   <BaseAutocomplete {...props} multiple />
 )
+
+type SupplierProductSummary = {
+  id: string
+  skuCode: string
+  name: string
+  uom: string
+  sellingPrice: number
+  supplierPrice: number
+  marginPct: number
+  categoryId?: string | null
+  categoryName?: string | null
+}
 
 const getFormattedCategoryLabel = (categoryId?: string | null): string => {
   const option = resolveCategory(categoryId)
@@ -101,10 +125,19 @@ export const SuppliersPage = () => {
     type: 'success' | 'error'
     message: string
   } | null>(null)
+  const [expandedSuppliers, setExpandedSuppliers] = useState<Record<string, boolean>>({})
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const globalQuery = useSearchStore(state => state.query)
   const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const priceFormatter = useMemo(
+    () =>
+      new Intl.NumberFormat(undefined, {
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 2,
+      }),
+    [],
+  )
 
   const suppliersQuery = useQuery({
     queryKey: ['suppliers-directory', globalQuery],
@@ -119,6 +152,11 @@ export const SuppliersPage = () => {
   const categoriesQuery = useQuery({
     queryKey: ['categories-tree'],
     queryFn: fetchCategories,
+  })
+
+  const marginProfilesQuery = useQuery({
+    queryKey: ['margin-profiles'],
+    queryFn: listMarginProfiles,
   })
 
   const createMutation = useMutation({
@@ -138,19 +176,6 @@ export const SuppliersPage = () => {
       a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }),
     )
   }, [suppliers])
-
-  const supplierProductsMap = useMemo(() => {
-    const map = new Map<string, Product[]>()
-    products.forEach(product => {
-      if (!product.supplierId) {
-        return
-      }
-      const current = map.get(product.supplierId) ?? []
-      current.push(product)
-      map.set(product.supplierId, current)
-    })
-    return map
-  }, [products])
 
   const {
     parentCategoryOptions,
@@ -266,6 +291,62 @@ export const SuppliersPage = () => {
       categoryMeta: meta,
     }
   }, [categoriesQuery.data, products])
+
+  const marginLookup = useMemo(() => {
+    const lookup = new Map<string, number>()
+    ;(marginProfilesQuery.data ?? []).forEach(profile => {
+      lookup.set(String(profile.parentCategoryId), profile.targetMarginPct)
+    })
+    return lookup
+  }, [marginProfilesQuery.data])
+
+  const supplierProductsMap = useMemo(() => {
+    const map = new Map<string, SupplierProductSummary[]>()
+
+    const resolveParentKey = (categoryId?: string | null): string | undefined => {
+      const normalized = categoryId?.trim()
+      if (!normalized) {
+        return undefined
+      }
+      return categoryMeta.get(normalized)?.parentKey ?? normalized
+    }
+
+    products.forEach(product => {
+      if (!product.supplierId) {
+        return
+      }
+
+      const parentKey = resolveParentKey(product.categoryId)
+      const targetMarginPct = parentKey ? (marginLookup.get(parentKey) ?? 0) : 0
+      const rawSupplierPrice =
+        targetMarginPct >= 100
+          ? 0
+          : Number((product.price - product.price * (targetMarginPct / 100)).toFixed(2))
+      const supplierPrice = rawSupplierPrice < 0 ? 0 : rawSupplierPrice
+
+      const summary: SupplierProductSummary = {
+        id: product.id,
+        skuCode: product.skuCode,
+        name: product.name,
+        uom: product.uom,
+        sellingPrice: product.price,
+        supplierPrice,
+        marginPct: targetMarginPct,
+        categoryId: product.categoryId,
+        categoryName: product.categoryName,
+      }
+
+      const current = map.get(product.supplierId) ?? []
+      current.push(summary)
+      map.set(product.supplierId, current)
+    })
+
+    map.forEach(items => {
+      items.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
+    })
+
+    return map
+  }, [products, categoryMeta, marginLookup])
 
   const derivedChildCategoryOptions = useMemo<CategoryOption[]>(() => {
     if (parentCategoryFilter.length === 0) {
@@ -538,6 +619,15 @@ export const SuppliersPage = () => {
     setChildCategoryFilter([])
   }
 
+  const toggleSupplierExpansion = (supplierId: string) => {
+    setExpandedSuppliers(prev => ({
+      ...prev,
+      [supplierId]: !prev[supplierId],
+    }))
+  }
+
+  const formatPrice = useCallback((value: number) => priceFormatter.format(value), [priceFormatter])
+
   const handleChangePage = (_event: unknown, newPage: number) => {
     setPage(newPage)
   }
@@ -740,59 +830,153 @@ export const SuppliersPage = () => {
                     }),
                   ).values(),
                 ).filter(label => label !== '—')
+                const hasProducts = supplierProducts.length > 0
+                const isExpanded = !!expandedSuppliers[supplier.id]
 
                 return (
-                  <TableRow hover key={supplier.id}>
-                    <TableCell>
-                      <Typography fontWeight={600}>{page * rowsPerPage + index + 1}</Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Stack spacing={0.5}>
-                        <Stack direction="row" spacing={1} alignItems="center">
-                          <Typography fontWeight={600}>{supplier.name}</Typography>
-                          {supplier.deleted && (
-                            <Chip size="small" label="Inactive" color="warning" />
-                          )}
+                  <Fragment key={supplier.id}>
+                    <TableRow hover>
+                      <TableCell>
+                        <Typography fontWeight={600}>{page * rowsPerPage + index + 1}</Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Stack spacing={0.5}>
+                          <Stack direction="row" spacing={1} alignItems="center">
+                            {hasProducts ? (
+                              <IconButton
+                                size="small"
+                                onClick={() => toggleSupplierExpansion(supplier.id)}
+                              >
+                                {isExpanded ? (
+                                  <KeyboardArrowDown fontSize="small" />
+                                ) : (
+                                  <KeyboardArrowRight fontSize="small" />
+                                )}
+                              </IconButton>
+                            ) : (
+                              <Box width={32} />
+                            )}
+                            <Stack spacing={0.25}>
+                              <Stack direction="row" spacing={1} alignItems="center">
+                                <Typography fontWeight={600}>{supplier.name}</Typography>
+                                {supplier.deleted && (
+                                  <Chip size="small" label="Inactive" color="warning" />
+                                )}
+                              </Stack>
+                              {!hasProducts && (
+                                <Typography variant="caption" color="text.secondary">
+                                  No linked products yet
+                                </Typography>
+                              )}
+                            </Stack>
+                          </Stack>
                         </Stack>
-                      </Stack>
-                    </TableCell>
-                    <TableCell align="center">
-                      {supplier.contact ? (
-                        <Typography>{supplier.contact}</Typography>
-                      ) : (
-                        <Typography color="text.secondary">—</Typography>
-                      )}
-                    </TableCell>
-                    <TableCell align="center">
-                      <Typography>{supplier.leadTimeDays}</Typography>
-                    </TableCell>
-                    <TableCell>
-                      {categoryBadges.length === 0 ? (
-                        <Typography color="text.secondary">—</Typography>
-                      ) : (
-                        <Stack direction="row" spacing={0.5} flexWrap="wrap">
-                          {categoryBadges.slice(0, 3).map(label => (
-                            <Chip key={label} size="small" label={label} />
-                          ))}
-                          {categoryBadges.length > 3 && (
-                            <Chip size="small" label={`+${categoryBadges.length - 3} more`} />
-                          )}
+                      </TableCell>
+                      <TableCell align="center">
+                        {supplier.contact ? (
+                          <Typography>{supplier.contact}</Typography>
+                        ) : (
+                          <Typography color="text.secondary">—</Typography>
+                        )}
+                      </TableCell>
+                      <TableCell align="center">
+                        <Typography>{supplier.leadTimeDays}</Typography>
+                      </TableCell>
+                      <TableCell>
+                        {categoryBadges.length === 0 ? (
+                          <Typography color="text.secondary">—</Typography>
+                        ) : (
+                          <Stack direction="row" spacing={0.5} flexWrap="wrap">
+                            {categoryBadges.slice(0, 3).map(label => (
+                              <Chip key={label} size="small" label={label} />
+                            ))}
+                            {categoryBadges.length > 3 && (
+                              <Chip size="small" label={`+${categoryBadges.length - 3} more`} />
+                            )}
+                          </Stack>
+                        )}
+                      </TableCell>
+                      <TableCell align="right">
+                        <Stack direction="row" spacing={1} justifyContent="flex-end">
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            onClick={() => handleStartPurchaseOrder(supplier.id)}
+                            startIcon={<ShoppingCartCheckoutIcon fontSize="small" />}
+                          >
+                            Start PO
+                          </Button>
                         </Stack>
-                      )}
-                    </TableCell>
-                    <TableCell align="right">
-                      <Stack direction="row" spacing={1} justifyContent="flex-end">
-                        <Button
-                          size="small"
-                          variant="outlined"
-                          onClick={() => handleStartPurchaseOrder(supplier.id)}
-                          startIcon={<ShoppingCartCheckoutIcon fontSize="small" />}
-                        >
-                          Start PO
-                        </Button>
-                      </Stack>
-                    </TableCell>
-                  </TableRow>
+                      </TableCell>
+                    </TableRow>
+                    {isExpanded && hasProducts && (
+                      <TableRow>
+                        <TableCell colSpan={6} sx={{ backgroundColor: 'grey.50' }}>
+                          <Stack spacing={1.5}>
+                            {supplierProducts.map(product => (
+                              <Box
+                                key={product.id}
+                                sx={{
+                                  p: 1.5,
+                                  borderRadius: 1,
+                                  border: '1px solid',
+                                  borderColor: 'divider',
+                                  display: 'flex',
+                                  flexDirection: { xs: 'column', md: 'row' },
+                                  gap: 2,
+                                  justifyContent: 'space-between',
+                                }}
+                              >
+                                <Box>
+                                  <Typography fontWeight={600}>{product.name}</Typography>
+                                  <Typography variant="caption" color="text.secondary">
+                                    {product.skuCode} · {product.uom}
+                                  </Typography>
+                                  {product.categoryName && (
+                                    <Typography variant="caption" color="text.secondary">
+                                      {product.categoryName}
+                                    </Typography>
+                                  )}
+                                </Box>
+                                <Stack
+                                  direction={{ xs: 'column', md: 'row' }}
+                                  spacing={3}
+                                  alignItems={{ xs: 'flex-start', md: 'center' }}
+                                >
+                                  <Box textAlign={{ md: 'right' }}>
+                                    <Typography variant="caption" color="text.secondary">
+                                      Selling price
+                                    </Typography>
+                                    <Typography fontWeight={600}>
+                                      {formatPrice(product.sellingPrice)}
+                                    </Typography>
+                                  </Box>
+                                  <Box textAlign={{ md: 'right' }}>
+                                    <Typography variant="caption" color="text.secondary">
+                                      Supplier price (est.)
+                                    </Typography>
+                                    <Typography fontWeight={700} color="success.main">
+                                      {formatPrice(product.supplierPrice)}
+                                    </Typography>
+                                  </Box>
+                                  <Chip
+                                    size="small"
+                                    variant={product.marginPct > 0 ? 'filled' : 'outlined'}
+                                    color={product.marginPct > 0 ? 'success' : 'default'}
+                                    label={
+                                      product.marginPct > 0
+                                        ? `${product.marginPct.toFixed(1)}% margin`
+                                        : 'No margin profile'
+                                    }
+                                  />
+                                </Stack>
+                              </Box>
+                            ))}
+                          </Stack>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </Fragment>
                 )
               })
             )}
