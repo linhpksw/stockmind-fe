@@ -1,42 +1,24 @@
-import type { ApiResponse } from './common'
-
-export interface InventoryAdjustmentRequest {
-  productId: string
-  lotId?: string
-  qtyDelta: number
-  reason: string
-  actorId: number
-  timestamp?: string
-}
-
-export interface InventoryAdjustmentResponse {
-  movementId: string
-  qty: number
-}
-
-export type InventoryAdjustmentApiResponse = ApiResponse<InventoryAdjustmentResponse>
-
-export interface LotSummary {
-  lotId: string
-  qtyOnHand: number
+export interface InventoryLotSummary {
+  lotId: number
+  lotCode: string
   receivedAt?: string | null
   expiryDate?: string | null
+  qtyOnHand: number
+  unitCost: number
 }
 
-export interface MovementSummary {
-  id: string
-  type: string
-  qty: number
-  lotId?: string | null
-  at: string
-  refType?: string | null
-  refId?: string | null
-}
+import type { PageResponse } from './common'
 
-export interface InventoryLedger {
-  productId: string
+export interface InventoryProductSummary {
+  productId: number
+  skuCode: string
+  name: string
+  categoryName?: string | null
+  supplierName?: string | null
+  uom: string
+  mediaUrl?: string | null
   onHand: number
-  lots: LotSummary[]
-  movements: MovementSummary[]
-  recentMovements?: MovementSummary[]
+  lots: InventoryLotSummary[]
 }
+
+export type InventoryProductSummaryPage = PageResponse<InventoryProductSummary>

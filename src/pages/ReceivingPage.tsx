@@ -1,225 +1,320 @@
-import AddIcon from '@mui/icons-material/Add'
+import KeyboardArrowDown from '@mui/icons-material/KeyboardArrowDown'
+import KeyboardArrowRight from '@mui/icons-material/KeyboardArrowRight'
 import {
   Alert,
+  Avatar,
   Box,
   Button,
-  Card,
-  CardContent,
-  Grid,
+  Chip,
+  IconButton,
+  Paper,
   Stack,
   Table,
   TableBody,
   TableCell,
+  TableContainer,
   TableHead,
+  TablePagination,
   TableRow,
-  TextField,
   Typography,
 } from '@mui/material'
-import { useMutation } from '@tanstack/react-query'
-import type { ChangeEvent, FormEvent } from 'react'
-import { useState } from 'react'
-import { createGrn, getGrnById } from '../api/grn'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Fragment, useEffect, useMemo, useState } from 'react'
+import { listGrnSummary, syncReceiving } from '../api/grn'
 import { SectionHeading } from '../components/common/SectionHeading'
-import type { GrnItemInput } from '../types/grn'
+import type { GrnSummary } from '../types/grn'
+import { formatDateTime } from '../utils/formatters'
 
-const newItem = (): GrnItemInput => ({
-  productId: 0,
-  qtyReceived: 0,
-  unitCost: 0,
-  lotCode: '',
-  expiryDate: '',
+const currencyFormatter = new Intl.NumberFormat('vi-VN', {
+  style: 'currency',
+  currency: 'VND',
+  minimumFractionDigits: 0,
 })
 
+const getInitials = (name: string) => name.trim().slice(0, 2).toUpperCase() || 'PD'
+
 export const ReceivingPage = () => {
-  const [poId, setPoId] = useState(0)
-  const [items, setItems] = useState<GrnItemInput[]>([newItem()])
-  const [grnLookup, setGrnLookup] = useState('')
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({})
+  const [page, setPage] = useState(0)
+  const [rowsPerPage, setRowsPerPage] = useState(10)
+  const queryClient = useQueryClient()
 
-  const createMutation = useMutation({
-    mutationFn: createGrn,
+  const summaryQuery = useQuery({
+    queryKey: ['grn-summary', page, rowsPerPage],
+    queryFn: () => listGrnSummary(page + 1, rowsPerPage),
   })
 
-  const lookupMutation = useMutation({
-    mutationFn: getGrnById,
+  const syncMutation = useMutation({
+    mutationFn: () => syncReceiving(page + 1, rowsPerPage),
+    onSuccess: data => {
+      queryClient.setQueryData(['grn-summary', page, rowsPerPage], data)
+      setExpanded({})
+    },
   })
 
-  const updateItem = (index: number, changes: Partial<GrnItemInput>) =>
-    setItems(prev => prev.map((item, idx) => (idx === index ? { ...item, ...changes } : item)))
+  const summaries = useMemo<GrnSummary[]>(() => summaryQuery.data?.data ?? [], [summaryQuery.data])
+  const pendingCount = useMemo(
+    () => summaries.filter(summary => summary.status !== 'RECEIVED').length,
+    [summaries],
+  )
+  const totalRows = summaryQuery.data?.total ?? 0
 
-  const handleAddItem = () => setItems(prev => [...prev, newItem()])
-  const handleRemoveItem = (index: number) => setItems(prev => prev.filter((_, idx) => idx !== index))
+  useEffect(() => {
+    setExpanded({})
+  }, [page, rowsPerPage])
 
-  const handleCreate = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    createMutation.mutate({
-      poId,
-      items: items.map(item => ({
-        ...item,
-        expiryDate: item.expiryDate || undefined,
-      })),
-    })
+  const buildRowKey = (grn: GrnSummary) =>
+    grn.status === 'RECEIVED' ? `grn-${grn.grnId}` : `po-${grn.poId}`
+
+  const toggleRow = (grn: GrnSummary) => {
+    const key = buildRowKey(grn)
+    setExpanded(prev => ({ ...prev, [key]: !prev[key] }))
   }
 
-  const handleLookup = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    const id = Number(grnLookup)
-    if (!id) return
-    lookupMutation.mutate(id)
-  }
+  const renderItems = (grn: GrnSummary) => {
+    const isPending = grn.status !== 'RECEIVED'
 
-  const handlePoChange = (event: ChangeEvent<HTMLInputElement>) => {
-    setPoId(Number(event.target.value))
-  }
-
-  const handleLookupChange = (event: ChangeEvent<HTMLInputElement>) => {
-    setGrnLookup(event.target.value)
+    return (
+      <Box sx={{ backgroundColor: 'grey.50', borderRadius: 2, p: 2 }}>
+        <Stack spacing={1.5}>
+          {grn.items.map(item => (
+            <Stack
+              key={`${grn.grnId}-${grn.status}-${item.productId}-${item.lotCode ?? 'pending'}`}
+              direction={{ xs: 'column', md: 'row' }}
+              spacing={2}
+              alignItems={{ xs: 'flex-start', md: 'center' }}
+              sx={{
+                p: 1.5,
+                borderRadius: 1,
+                border: '1px solid',
+                borderColor: 'divider',
+              }}
+            >
+              <Box flex={1}>
+                <Stack direction="row" spacing={1} alignItems="center">
+                  {item.mediaUrl ? (
+                    <Avatar src={item.mediaUrl} alt={item.productName} variant="rounded" />
+                  ) : (
+                    <Avatar variant="rounded">{getInitials(item.productName)}</Avatar>
+                  )}
+                  <Box>
+                    <Typography fontWeight={600}>{item.productName}</Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {isPending
+                        ? `SKU #${item.productId}`
+                        : `Lot ${item.lotCode ?? '—'} · SKU #${item.productId}`}
+                    </Typography>
+                  </Box>
+                </Stack>
+              </Box>
+              <Stack direction="row" spacing={3} flexWrap="wrap">
+                <Box sx={{ textAlign: 'center', minWidth: 120 }}>
+                  <Typography variant="caption" color="text.secondary">
+                    Quantity
+                  </Typography>
+                  <Typography fontWeight={600}>{item.qtyReceived}</Typography>
+                </Box>
+                <Box sx={{ textAlign: 'center', minWidth: 120 }}>
+                  <Typography variant="caption" color="text.secondary">
+                    Unit cost
+                  </Typography>
+                  <Typography fontWeight={700} color="success.main">
+                    {currencyFormatter.format(item.unitCost)}
+                  </Typography>
+                </Box>
+                <Box sx={{ textAlign: 'center', minWidth: 140 }}>
+                  <Typography variant="caption" color="text.secondary">
+                    {isPending ? 'Expected date' : 'Expiry'}
+                  </Typography>
+                  <Typography fontWeight={600}>
+                    {isPending
+                      ? formatDateTime(item.expectedDate ?? grn.receivedAt, 'dd MMM yyyy')
+                      : item.expiryDate
+                        ? formatDateTime(item.expiryDate, 'dd MMM yyyy')
+                        : '—'}
+                  </Typography>
+                </Box>
+                {!isPending && (
+                  <Box>
+                    <Typography variant="caption" color="text.secondary">
+                      Lot code
+                    </Typography>
+                    <Typography fontWeight={600}>{item.lotCode ?? '—'}</Typography>
+                  </Box>
+                )}
+              </Stack>
+            </Stack>
+          ))}
+        </Stack>
+      </Box>
+    )
   }
 
   return (
-    <Stack spacing={4}>
-      <SectionHeading title="Goods receipt" subtitle="Convert delivered POs into stock." />
-      <Card>
-        <CardContent>
-          <SectionHeading title="Capture GRN" />
-          <Stack spacing={3} component="form" onSubmit={handleCreate}>
-            <TextField
-              label="PO ID"
-              type="number"
-              value={poId}
-              onChange={handlePoChange}
-              required
-            />
-            <Stack spacing={2}>
-              {items.map((item, index) => (
-                <Card key={index} variant="outlined">
-                  <CardContent>
-                    <Grid container spacing={2}>
-                      <Grid item xs={12} sm={3}>
-                        <TextField
-                          label="Product ID"
-                          type="number"
-                          value={item.productId}
-                          onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                            updateItem(index, { productId: Number(event.target.value) })
-                          }
-                          required
-                        />
-                      </Grid>
-                      <Grid item xs={12} sm={3}>
-                        <TextField
-                          label="Qty received"
-                          type="number"
-                          value={item.qtyReceived}
-                          onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                            updateItem(index, { qtyReceived: Number(event.target.value) })
-                          }
-                          required
-                        />
-                      </Grid>
-                      <Grid item xs={12} sm={3}>
-                        <TextField
-                          label="Unit cost"
-                          type="number"
-                          value={item.unitCost}
-                          onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                            updateItem(index, { unitCost: Number(event.target.value) })
-                          }
-                          required
-                        />
-                      </Grid>
-                      <Grid item xs={12} sm={3}>
-                        <TextField
-                          label="Lot code"
-                          value={item.lotCode}
-                          onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                            updateItem(index, { lotCode: event.target.value })
-                          }
-                          required
-                        />
-                      </Grid>
-                      <Grid item xs={12} sm={4}>
-                        <TextField
-                          label="Expiry date"
-                          type="date"
-                          value={item.expiryDate ?? ''}
-                          onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                            updateItem(index, { expiryDate: event.target.value })
-                          }
-                          InputLabelProps={{ shrink: true }}
-                        />
-                      </Grid>
-                    </Grid>
-                    {items.length > 1 && (
-                      <Button color="error" onClick={() => handleRemoveItem(index)}>
-                        Remove line
-                      </Button>
-                    )}
-                  </CardContent>
-                </Card>
-              ))}
-            </Stack>
-            <Button startIcon={<AddIcon />} onClick={handleAddItem} variant="text">
-              Add line
+    <Stack spacing={3}>
+      <SectionHeading
+        title="Receiving (GRN)"
+        subtitle="Accept incoming purchase orders and capture lot details."
+        action={
+          <Stack spacing={0.5} alignItems="flex-end" textAlign="right">
+            <Button
+              variant="contained"
+              onClick={() => syncMutation.mutate()}
+              disabled={pendingCount === 0 || syncMutation.isPending}
+            >
+              {syncMutation.isPending ? 'Syncing…' : 'Accept all PO'}
             </Button>
-            {createMutation.isError && (
-              <Alert severity="error">
-                {createMutation.error instanceof Error
-                  ? createMutation.error.message
-                  : 'Failed to create GRN.'}
-              </Alert>
+            {pendingCount > 0 ? (
+              <Typography variant="caption" color="text.secondary">
+                {pendingCount} purchase order{pendingCount === 1 ? '' : 's'} ready to receive.
+              </Typography>
+            ) : (
+              <Typography variant="caption" color="text.secondary">
+                All purchase orders are already received; new GRNs will appear here automatically.
+              </Typography>
             )}
-            {createMutation.isSuccess && (
-              <Alert severity="success">GRN #{createMutation.data.id} recorded.</Alert>
-            )}
-            <Button type="submit" variant="contained" disabled={createMutation.isPending}>
-              {createMutation.isPending ? 'Saving...' : 'Capture GRN'}
-            </Button>
           </Stack>
-        </CardContent>
-      </Card>
+        }
+      />
 
-      <Card>
-        <CardContent>
-          <SectionHeading title="Inspect GRN" />
-          <Stack spacing={2} component="form" onSubmit={handleLookup}>
-            <TextField
-              label="GRN ID"
-              value={grnLookup}
-              onChange={handleLookupChange}
-              required
-            />
-            <Button type="submit" variant="outlined" disabled={lookupMutation.isPending}>
-              {lookupMutation.isPending ? 'Loading...' : 'Fetch GRN'}
-            </Button>
-          </Stack>
-          {lookupMutation.isError && <Alert severity="error">GRN not found.</Alert>}
-          {lookupMutation.data && (
-            <Box mt={3}>
-              <Typography variant="subtitle1">GRN #{lookupMutation.data.id}</Typography>
-              <Table size="small" sx={{ mt: 2 }}>
-                <TableHead>
-                  <TableRow>
-                    <TableCell>Product</TableCell>
-                    <TableCell>Lot</TableCell>
-                    <TableCell align="right">Qty</TableCell>
-                    <TableCell>Type</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {lookupMutation.data.stockMovements.map(move => (
-                    <TableRow key={`${move.productId}-${move.lotId}`}>
-                      <TableCell>{move.productId}</TableCell>
-                      <TableCell>{move.lotId}</TableCell>
-                      <TableCell align="right">{move.qty}</TableCell>
-                      <TableCell>{move.type}</TableCell>
+      {syncMutation.isError && <Alert severity="error">Unable to sync GRNs.</Alert>}
+      {summaryQuery.isError && <Alert severity="error">Failed to load GRNs.</Alert>}
+
+      <TableContainer component={Paper}>
+        <Table size="small">
+          <TableHead>
+            <TableRow>
+              <TableCell width="60px">No.</TableCell>
+              <TableCell>Supplier</TableCell>
+              <TableCell>PO</TableCell>
+              <TableCell align="center">Total qty</TableCell>
+              <TableCell align="right">Total cost</TableCell>
+              <TableCell>Received at</TableCell>
+              <TableCell align="right">Lots</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {summaryQuery.isLoading ? (
+              <TableRow>
+                <TableCell colSpan={7}>
+                  <Typography textAlign="center" py={3}>
+                    Loading receipts…
+                  </Typography>
+                </TableCell>
+              </TableRow>
+            ) : summaries.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={7}>
+                  <Box py={4} textAlign="center">
+                    <Typography variant="h6">No GRNs available</Typography>
+                    <Typography color="text.secondary">
+                      Sync purchase orders first, then accept them here.
+                    </Typography>
+                  </Box>
+                </TableCell>
+              </TableRow>
+            ) : (
+              summaries.map((grn, index) => {
+                const key = buildRowKey(grn)
+                const isExpanded = !!expanded[key]
+                const isPending = grn.status !== 'RECEIVED'
+                const itemLabel = `${grn.items.length} ${isPending ? 'item' : 'lot'}${
+                  grn.items.length === 1 ? '' : 's'
+                }`
+
+                return (
+                  <Fragment key={key}>
+                    <TableRow>
+                      <TableCell>
+                        <Typography fontWeight={600}>{page * rowsPerPage + index + 1}</Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Stack direction="row" spacing={1} alignItems="center">
+                          <IconButton size="small" onClick={() => toggleRow(grn)}>
+                            {isExpanded ? (
+                              <KeyboardArrowDown fontSize="small" />
+                            ) : (
+                              <KeyboardArrowRight fontSize="small" />
+                            )}
+                          </IconButton>
+                          <Box>
+                            <Typography fontWeight={600}>{grn.supplierName}</Typography>
+                          </Box>
+                        </Stack>
+                      </TableCell>
+                      <TableCell>
+                        <Stack
+                          direction="row"
+                          spacing={1}
+                          alignItems="center"
+                          flexWrap="wrap"
+                          rowGap={0.5}
+                        >
+                          <Chip size="small" label={`PO #${grn.poId}`} />
+                          <Chip
+                            size="small"
+                            label={isPending ? 'Awaiting receipt' : 'Received'}
+                            color={isPending ? 'warning' : 'success'}
+                          />
+                        </Stack>
+                      </TableCell>
+                      <TableCell align="center">
+                        <Typography fontWeight={700} color="primary.main">
+                          {grn.totalQty.toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                        </Typography>
+                      </TableCell>
+                      <TableCell align="right">
+                        <Typography fontWeight={700} color="success.main">
+                          {currencyFormatter.format(grn.totalCost)}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        {isPending ? (
+                          <Box>
+                            <Typography fontWeight={600}>
+                              {formatDateTime(grn.receivedAt, 'dd MMM yyyy')}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              Expected arrival
+                            </Typography>
+                          </Box>
+                        ) : (
+                          <Typography fontWeight={600}>{formatDateTime(grn.receivedAt)}</Typography>
+                        )}
+                      </TableCell>
+                      <TableCell align="right">
+                        <Button size="small" onClick={() => toggleRow(grn)}>
+                          {isExpanded ? 'Hide details' : `Show ${itemLabel}`}
+                        </Button>
+                      </TableCell>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </Box>
-          )}
-        </CardContent>
-      </Card>
+                    {isExpanded && (
+                      <TableRow>
+                        <TableCell colSpan={7} sx={{ backgroundColor: 'grey.50' }}>
+                          {renderItems(grn)}
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </Fragment>
+                )
+              })
+            )}
+          </TableBody>
+        </Table>
+      </TableContainer>
+
+      <TablePagination
+        component="div"
+        count={totalRows}
+        page={page}
+        onPageChange={(_event, newPage) => setPage(newPage)}
+        rowsPerPage={rowsPerPage}
+        onRowsPerPageChange={event => {
+          setRowsPerPage(parseInt(event.target.value, 10))
+          setPage(0)
+        }}
+        rowsPerPageOptions={[10, 25, 50]}
+      />
     </Stack>
   )
 }

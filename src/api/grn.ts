@@ -1,13 +1,23 @@
 import { apiClient } from './client'
-import type { CreateGrnRequest, GrnResponse, GrnResponseDto } from '../types/grn'
-import { unwrap } from './helpers'
+import { unwrapPage } from './helpers'
+import type { PageResponse } from '../types/common'
+import type { GrnSummary, GrnSummaryPage } from '../types/grn'
 
-export const createGrn = async (payload: CreateGrnRequest): Promise<GrnResponseDto> => {
-  const { data } = await apiClient.post<GrnResponse>('/api/grns', payload)
-  return unwrap(data)
+type GrnSummaryResponse = PageResponse<GrnSummary>
+
+export const syncReceiving = async (pageNum: number, pageSize: number): Promise<GrnSummaryPage> => {
+  const { data } = await apiClient.post<GrnSummaryResponse>('/api/grns/sync', null, {
+    params: { pageNum, pageSize },
+  })
+  return unwrapPage(data)
 }
 
-export const getGrnById = async (id: number): Promise<GrnResponseDto> => {
-  const { data } = await apiClient.get<GrnResponse>(`/api/grns/${id}`)
-  return unwrap(data)
+export const listGrnSummary = async (
+  pageNum: number,
+  pageSize: number,
+): Promise<GrnSummaryPage> => {
+  const { data } = await apiClient.get<GrnSummaryResponse>('/api/grns/summary', {
+    params: { pageNum, pageSize },
+  })
+  return unwrapPage(data)
 }

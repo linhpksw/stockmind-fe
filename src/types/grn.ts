@@ -1,29 +1,26 @@
-import type { ApiResponse } from './common'
+import type { PageResponse } from './common'
 
-export interface GrnItemInput {
+export interface GrnItemSummary {
   productId: number
+  productName: string
   qtyReceived: number
   unitCost: number
-  lotCode: string
+  lotCode?: string | null
   expiryDate?: string | null
+  expectedDate?: string | null
+  mediaUrl?: string | null
 }
 
-export interface CreateGrnRequest {
+export interface GrnSummary {
+  grnId: number
   poId: number
-  receivedAt?: string
-  items: GrnItemInput[]
+  supplierId: number
+  supplierName: string
+  receivedAt: string
+  status: string
+  totalQty: number
+  totalCost: number
+  items: GrnItemSummary[]
 }
 
-export interface StockMovementRef {
-  productId: string
-  lotId: string
-  qty: number
-  type: string
-}
-
-export interface GrnResponseDto {
-  id: string
-  stockMovements: StockMovementRef[]
-}
-
-export type GrnResponse = ApiResponse<GrnResponseDto>
+export type GrnSummaryPage = PageResponse<GrnSummary>
