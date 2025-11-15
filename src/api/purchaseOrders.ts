@@ -1,7 +1,13 @@
 import { apiClient } from './client'
-import { unwrapPage } from './helpers'
+import { unwrap, unwrapPage } from './helpers'
 import type { PageResponse } from '../types/common'
-import type { PurchaseOrderSummary, PurchaseOrderSummaryPage } from '../types/purchaseOrders'
+import type {
+  CreatePurchaseOrderRequest,
+  PurchaseOrder,
+  PurchaseOrderResponse,
+  PurchaseOrderSummary,
+  PurchaseOrderSummaryPage,
+} from '../types/purchaseOrders'
 
 type PurchaseOrderSummaryResponse = PageResponse<PurchaseOrderSummary>
 const SUMMARY_PAGE_SIZE = 100
@@ -34,6 +40,13 @@ export const fetchAllPurchaseOrderSummaries = async (): Promise<PurchaseOrderSum
   }
 
   return aggregated
+}
+
+export const createPurchaseOrder = async (
+  payload: CreatePurchaseOrderRequest,
+): Promise<PurchaseOrder> => {
+  const { data } = await apiClient.post<PurchaseOrderResponse>('/api/pos', payload)
+  return unwrap(data)
 }
 
 export const listPurchaseOrderSummary = async (
