@@ -37,7 +37,7 @@ import { useCategoryFilters, type ParentCategoryOption } from '../hooks/useCateg
 import { useProductCategoryMap } from '../hooks/useProductCategoryMap'
 import { useSupplierOptions } from '../hooks/useSupplierOptions'
 import type { CategoryOption } from '../utils/categories'
-import type { InventoryProductSummary } from '../types/inventory'
+import type { InventoryLotSummary, InventoryProductSummary } from '../types/inventory'
 import { formatDateTime } from '../utils/formatters'
 
 const currencyFormatter = new Intl.NumberFormat('vi-VN', {
@@ -201,13 +201,32 @@ export const InventoryPage = () => {
     }
   }
 
+  const getSortedLots = (lots: InventoryLotSummary[]): InventoryLotSummary[] => {
+    if (!lots || lots.length === 0) {
+      return []
+    }
+
+    const sorted = [...lots].sort((a, b) => {
+      const aTime = a.receivedAt ? Date.parse(a.receivedAt) : 0
+      const bTime = b.receivedAt ? Date.parse(b.receivedAt) : 0
+
+      if (aTime !== bTime) {
+        return bTime - aTime
+      }
+
+      return b.lotId - a.lotId
+    })
+
+    return sorted
+  }
+
   const renderLots = (product: InventoryProductSummary) => (
     <Box sx={{ backgroundColor: 'grey.50', borderRadius: 2, p: 2 }}>
       {product.lots.length === 0 ? (
         <Typography color="text.secondary">No lots received yet.</Typography>
       ) : (
         <Stack spacing={1.5}>
-          {product.lots.map(lot => (
+          {getSortedLots(product.lots).map(lot => (
             <Stack
               key={lot.lotId}
               direction={{ xs: 'column', md: 'row' }}
