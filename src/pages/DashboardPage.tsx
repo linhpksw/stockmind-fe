@@ -13,18 +13,64 @@ import {
   Typography,
 } from '@mui/material'
 import { useQuery } from '@tanstack/react-query'
+import { useMemo } from 'react'
 import { getAlerts } from '../api/alerts'
+import { listProducts } from '../api/products'
 import { getReplenishmentSuggestions } from '../api/replenishment'
 import { StatCard } from '../components/cards/StatCard'
 import { SectionHeading } from '../components/common/SectionHeading'
-import { formatCurrency } from '../utils/formatters'
-import type { AlertsAggregate } from '../types/alerts'
+import type { AlertsAggregate, LowStock } from '../types/alerts'
+import type { ReplenishmentSuggestion } from '../types/replenishment'
+
+const EMPTY_ALERTS: AlertsAggregate = { lowStock: [], expirySoon: [], slowMovers: [] }
+const EMPTY_REPLENISHMENT: ReplenishmentSuggestion[] = []
+
+const formatProductLabel = (productId: string | number) => `Product ID ${productId}`
+const formatLotLabel = (lotId: string, lotCode?: string) =>
+  lotCode && lotCode.trim().length > 0 ? `Lot ${lotCode.trim()}` : `Lot #${lotId}`
+const resolveProductName = (
+  productName: string | undefined,
+  productId: string | number,
+  fallbackName?: string,
+) => {
+  const trimmed = productName?.trim() || fallbackName?.trim()
+  return trimmed && trimmed.length > 0 ? trimmed : formatProductLabel(productId)
+}
+const formatUnits = (amount: number) => {
+  const quantity = amount.toLocaleString()
+  const suffix = Math.abs(amount) === 1 ? 'unit' : 'units'
+  return `${quantity} ${suffix}`
+}
+const formatDays = (days: number) => `${days} day${days === 1 ? '' : 's'}`
 
 export const DashboardPage = () => {
   const alertsQuery = useQuery({ queryKey: ['alerts'], queryFn: getAlerts })
   const replenishmentQuery = useQuery({
     queryKey: ['replenishment'],
     queryFn: getReplenishmentSuggestions,
+  })
+  const alerts = alertsQuery.data ?? EMPTY_ALERTS
+  const replenishment = replenishmentQuery.data ?? EMPTY_REPLENISHMENT
+  const lowStockItems = alerts.lowStock
+  const expiringLots = alerts.expirySoon
+  const shouldFetchProductNames = useMemo(
+    () =>
+      lowStockItems.some(item => !item.productName || item.productName.trim().length === 0) ||
+      expiringLots.length > 0 ||
+      replenishment.length > 0,
+    [expiringLots, lowStockItems, replenishment],
+  )
+  const productNameLookupQuery = useQuery({
+    queryKey: ['products', 'name-lookup'],
+    queryFn: async (): Promise<Record<string, string>> => {
+      const products = await listProducts()
+      return products.reduce<Record<string, string>>((acc, product) => {
+        acc[product.id] = product.name
+        return acc
+      }, {})
+    },
+    enabled: shouldFetchProductNames,
+    staleTime: 5 * 60 * 1000,
   })
 
   if (alertsQuery.isLoading || replenishmentQuery.isLoading) {
@@ -35,9 +81,11 @@ export const DashboardPage = () => {
     return <Alert severity="error">Unable to load alerts</Alert>
   }
 
-  const emptyAlerts: AlertsAggregate = { lowStock: [], expirySoon: [], slowMovers: [] }
-  const alerts = alertsQuery.data ?? emptyAlerts
-  const replenishment = replenishmentQuery.data ?? []
+  const productNameLookup = productNameLookupQuery.data ?? {}
+  const resolveProductNameById = (productId: string | number, providedName?: string) =>
+    resolveProductName(providedName, productId, productNameLookup[String(productId)])
+  const resolveLowStockProductName = (item: LowStock) =>
+    resolveProductNameById(item.productId, item.productName)
 
   return (
     <Stack spacing={4}>
@@ -79,8 +127,14 @@ export const DashboardPage = () => {
                 {alerts?.lowStock.slice(0, 6).map(item => (
                   <ListItem key={item.productId} divider>
                     <ListItemText
-                      primary={item.productId}
-                      secondary={`On hand ${item.onHand} / Min ${item.minStock}`}
+                      primary={resolveLowStockProductName(item)}
+                      secondary={
+                        <Typography component="span" variant="body2" color="text.secondary">
+                          {formatProductLabel(item.productId)} •{' '}
+                          <strong>{formatUnits(item.onHand)}</strong> on hand (minimum{' '}
+                          <strong>{formatUnits(item.minStock)}</strong>)
+                        </Typography>
+                      }
                     />
                   </ListItem>
                 ))}
@@ -99,8 +153,12 @@ export const DashboardPage = () => {
                 {alerts?.expirySoon.slice(0, 6).map(item => (
                   <ListItem key={`${item.productId}-${item.lotId}`} divider>
                     <ListItemText
-                      primary={`${item.productId} • Lot ${item.lotId}`}
-                      secondary={`Expires in ${item.daysToExpiry} day(s)`}
+                      primary={`${resolveProductNameById(item.productId)} | ${formatLotLabel(item.lotId, item.lotCode)}`}
+                      secondary={
+                        <Typography component="span" variant="body2" color="text.secondary">
+                          Expires in <strong>{formatDays(item.daysToExpiry)}</strong>
+                        </Typography>
+                      }
                     />
                   </ListItem>
                 ))}
@@ -129,17 +187,19 @@ export const DashboardPage = () => {
                 sx={{ borderBottom: '1px solid', borderColor: 'divider' }}
               >
                 <Stack spacing={0.5}>
-                  <Typography variant="subtitle1">SKU #{item.productId}</Typography>
+                  <Typography variant="subtitle1">
+                    {resolveProductNameById(item.productId)}
+                  </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    Lead time: {item.leadTimeDays} day(s) • Safety stock:{' '}
-                    {formatCurrency(item.safetyStock)}
+                    Lead time: {formatDays(item.leadTimeDays)} | Safety stock:{' '}
+                    {formatUnits(item.safetyStock)}
                   </Typography>
                 </Stack>
                 <Chip
                   color={item.suggestedQty > 0 ? 'warning' : 'success'}
                   label={
                     item.suggestedQty > 0
-                      ? `Suggest order ${item.suggestedQty}`
+                      ? `Suggest ordering ${formatUnits(item.suggestedQty)}`
                       : 'Stock is healthy'
                   }
                 />

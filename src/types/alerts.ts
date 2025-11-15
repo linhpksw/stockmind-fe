@@ -1,5 +1,6 @@
 export interface LowStock {
   productId: string
+  productName: string
   onHand: number
   minStock: number
 }
@@ -7,6 +8,7 @@ export interface LowStock {
 export interface ExpirySoon {
   productId: string
   lotId: string
+  lotCode?: string
   daysToExpiry: number
 }
 

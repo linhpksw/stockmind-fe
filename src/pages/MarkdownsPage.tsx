@@ -8,13 +8,16 @@ import {
   Button,
   Card,
   CardContent,
+  Chip,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
+  InputAdornment,
   IconButton,
   LinearProgress,
   Grid,
+  MenuItem,
   Stack,
   Tab,
   Table,
@@ -29,6 +32,7 @@ import {
 } from '@mui/material'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
+  Fragment,
   useCallback,
   useEffect,
   useMemo,
@@ -39,18 +43,28 @@ import {
   type SyntheticEvent,
 } from 'react'
 import {
+  applyAllMarkdowns,
   applyMarkdown,
   createMarkdownRule,
   deleteMarkdownRule,
   getMarkdownRecommendations,
+  revertLotSaleDecision,
   listMarkdownRules,
   updateMarkdownRule,
 } from '../api/markdowns'
 import { fetchCategories } from '../api/categories'
 import { SectionHeading } from '../components/common/SectionHeading'
+import { listMarginProfiles } from '../api/margins'
 import type { CategoryNode } from '../types/categories'
 import type { CategoryOption } from '../utils/categories'
-import type { MarkdownRule, UpsertMarkdownRuleRequest } from '../types/markdowns'
+import { formatDateTime } from '../utils/formatters'
+import type {
+  MarkdownApplyBulkRequest,
+  MarkdownApplyBulkResponse,
+  MarkdownRecommendation,
+  MarkdownRule,
+  UpsertMarkdownRuleRequest,
+} from '../types/markdowns'
 
 interface ParentCategoryOption {
   key: string
@@ -76,6 +90,24 @@ interface RuleDialogState {
   rule?: MarkdownRule
 }
 
+interface PendingApplyState {
+  item: MarkdownRecommendation
+  discount: number
+  requiresOverride: boolean
+}
+
+interface PendingApplyAllState {
+  total: number
+  overrides: number
+}
+
+interface PendingRuleSubmission {
+  payload: UpsertMarkdownRuleRequest
+  mode: 'create' | 'edit'
+  ruleId?: number
+  floorPercentDisplay: number
+}
+
 const BaseAutocomplete = Autocomplete as unknown as (props: Record<string, unknown>) => ReactElement
 
 type SingleSelectAutocompleteProps<T> = {
@@ -98,21 +130,27 @@ const SingleSelectAutocomplete = <T,>(props: SingleSelectAutocompleteProps<T>) =
 const fractionToPercent = (value?: number, fallback = 0): number =>
   Number(((value ?? fallback) * 100).toFixed(2))
 
-const clampPercent = (value: number): number => {
+const clampPercent = (value: number, allowNegative = false): number => {
   if (Number.isNaN(value)) {
     return 0
   }
-  return Math.min(100, Math.max(0, value))
+  const min = allowNegative ? -100 : 0
+  return Math.min(100, Math.max(min, value))
 }
 
-const percentToFraction = (value: number): number => Number((clampPercent(value) / 100).toFixed(4))
+const percentToFraction = (value: number, allowNegative = false): number =>
+  Number((clampPercent(value, allowNegative) / 100).toFixed(4))
 
 const resolveErrorMessage = (error: unknown, fallback: string): string =>
   error instanceof Error ? error.message : fallback
 
 export const MarkdownsPage = () => {
   const [activeTab, setActiveTab] = useState(0)
-  const [days, setDays] = useState(3)
+  const [days, setDays] = useState(1)
+  const [filterParentCategory, setFilterParentCategory] = useState<ParentCategoryOption | null>(
+    null,
+  )
+  const [filterChildCategory, setFilterChildCategory] = useState<CategoryOption | null>(null)
   const [ruleDialogState, setRuleDialogState] = useState<RuleDialogState>({
     open: false,
     mode: 'create',
@@ -124,7 +162,15 @@ export const MarkdownsPage = () => {
     discountPercent: 20,
     floorPercentOfCost: 80,
   })
+  const [floorInputValue, setFloorInputValue] = useState('80')
   const [ruleToDelete, setRuleToDelete] = useState<MarkdownRule | null>(null)
+  const [discountOverrides, setDiscountOverrides] = useState<Record<string, number>>({})
+  const [pendingApply, setPendingApply] = useState<PendingApplyState | null>(null)
+  const [pendingApplyAll, setPendingApplyAll] = useState<PendingApplyAllState | null>(null)
+  const [pendingLossSubmission, setPendingLossSubmission] = useState<PendingRuleSubmission | null>(
+    null,
+  )
+  const [revertingDecisionId, setRevertingDecisionId] = useState<number | null>(null)
   const queryClient = useQueryClient()
 
   const recommendationsQuery = useQuery({
@@ -138,6 +184,21 @@ export const MarkdownsPage = () => {
       queryClient.invalidateQueries({ queryKey: ['markdowns'] })
     },
   })
+  const applyAllMutation = useMutation<MarkdownApplyBulkResponse, Error, MarkdownApplyBulkRequest>({
+    mutationFn: applyAllMarkdowns,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['markdowns'] })
+    },
+  })
+  const revertDecisionMutation = useMutation({
+    mutationFn: (decisionId: number) => revertLotSaleDecision(decisionId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['markdowns'] })
+    },
+    onSettled: () => {
+      setRevertingDecisionId(null)
+    },
+  })
 
   const rulesQuery = useQuery({
     queryKey: ['markdown-rules'],
@@ -147,7 +208,10 @@ export const MarkdownsPage = () => {
   const categoriesQuery = useQuery({
     queryKey: ['markdown-rule-categories'],
     queryFn: fetchCategories,
-    enabled: activeTab === 1 || ruleDialogState.open,
+  })
+  const marginProfilesQuery = useQuery({
+    queryKey: ['margin-profiles'],
+    queryFn: listMarginProfiles,
   })
 
   const {
@@ -215,6 +279,71 @@ export const MarkdownsPage = () => {
 
     return childCategoryLookup.get(ruleForm.parentCategory.key) ?? []
   }, [childCategoryLookup, ruleForm.parentCategory])
+  const filterChildOptions = useMemo(() => {
+    if (!filterParentCategory) {
+      return []
+    }
+    return childCategoryLookup.get(filterParentCategory.key) ?? []
+  }, [childCategoryLookup, filterParentCategory])
+  useEffect(() => {
+    if (
+      filterParentCategory &&
+      !parentCategoryOptions.some(option => option.key === filterParentCategory.key)
+    ) {
+      setFilterParentCategory(null)
+      setFilterChildCategory(null)
+      return
+    }
+    if (filterChildCategory) {
+      if (!filterParentCategory) {
+        setFilterChildCategory(null)
+        return
+      }
+      const validChildren = childCategoryLookup.get(filterParentCategory.key) ?? []
+      if (!validChildren.some(option => option.key === filterChildCategory.key)) {
+        setFilterChildCategory(null)
+      }
+    }
+  }, [filterParentCategory, filterChildCategory, parentCategoryOptions, childCategoryLookup])
+  const marginLookup = useMemo(() => {
+    const map = new Map<string, { minMarginPct: number; targetMarginPct: number }>()
+    ;(marginProfilesQuery.data ?? []).forEach(profile => {
+      map.set(profile.parentCategoryId.toString(), {
+        minMarginPct: profile.minMarginPct,
+        targetMarginPct: profile.targetMarginPct,
+      })
+    })
+    return map
+  }, [marginProfilesQuery.data])
+  const resolveMarginPreset = useCallback(
+    (categoryKey?: string | null) => {
+      if (!categoryKey) {
+        return null
+      }
+      const metaEntry = categoryMeta.get(categoryKey)
+      const lookupKey = metaEntry?.parentKey ?? categoryKey
+      const target = marginLookup.get(lookupKey)
+      return target ? Number(target.minMarginPct.toFixed(2)) : null
+    },
+    [categoryMeta, marginLookup],
+  )
+  const ruleCategoryKey = ruleForm.childCategory?.key ?? ruleForm.parentCategory?.key ?? null
+  const selectedMinMarginPct = useMemo(
+    () => (ruleCategoryKey ? resolveMarginPreset(ruleCategoryKey) : null),
+    [ruleCategoryKey, resolveMarginPreset],
+  )
+  const getTargetMarginPct = useCallback(
+    (categoryKey?: string | null) => {
+      if (!categoryKey) {
+        return null
+      }
+      const metaEntry = categoryMeta.get(categoryKey)
+      const lookupKey = metaEntry?.parentKey ?? categoryKey
+      const entry = marginLookup.get(lookupKey)
+      return entry ? entry.targetMarginPct : null
+    },
+    [categoryMeta, marginLookup],
+  )
 
   const buildRuleFormState = useCallback(
     (rule?: MarkdownRule): RuleFormState => {
@@ -277,6 +406,16 @@ export const MarkdownsPage = () => {
       closeRuleDialog()
     },
   })
+  const submitRule = useCallback(
+    (submission: PendingRuleSubmission) => {
+      if (submission.mode === 'edit' && submission.ruleId) {
+        updateRuleMutation.mutate({ ruleId: submission.ruleId, payload: submission.payload })
+      } else {
+        createRuleMutation.mutate(submission.payload)
+      }
+    },
+    [createRuleMutation, updateRuleMutation],
+  )
 
   const deleteRuleMutation = useMutation({
     mutationFn: deleteMarkdownRule,
@@ -318,11 +457,221 @@ export const MarkdownsPage = () => {
       return a.daysToExpiry - b.daysToExpiry
     })
   }, [rulesQuery.data])
+  const [selectedGroupKey, setSelectedGroupKey] = useState<string>('__all__')
+
+  const groupedRules = useMemo(
+    () =>
+      sortedRules.reduce<{ key: string; label: string; rules: MarkdownRule[] }[]>(
+        (groups, rule) => {
+          const key = rule.categoryId ?? '__global__'
+          const label = rule.categoryName ?? 'All categories'
+          const lastGroup = groups[groups.length - 1]
+          if (lastGroup && lastGroup.key === key) {
+            lastGroup.rules.push(rule)
+            return groups
+          }
+          groups.push({ key, label, rules: [rule] })
+          return groups
+        },
+        [],
+      ),
+    [sortedRules],
+  )
+  useEffect(() => {
+    if (selectedGroupKey === '__all__') {
+      return
+    }
+    if (!groupedRules.some(group => group.key === selectedGroupKey)) {
+      setSelectedGroupKey('__all__')
+    }
+  }, [groupedRules, selectedGroupKey])
+  const groupSelectOptions = useMemo(
+    () => [
+      { key: '__all__', label: 'All scopes' },
+      ...groupedRules.map(group => ({ key: group.key, label: group.label })),
+    ],
+    [groupedRules],
+  )
+  const visibleGroups = useMemo(
+    () =>
+      selectedGroupKey === '__all__'
+        ? groupedRules
+        : groupedRules.filter(group => group.key === selectedGroupKey),
+    [groupedRules, selectedGroupKey],
+  )
 
   const percentFormatter = useMemo(
     () => new Intl.NumberFormat(undefined, { style: 'percent', maximumFractionDigits: 0 }),
     [],
   )
+  const profitFormatter = useMemo(
+    () => new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }),
+    [],
+  )
+
+  const recommendations = useMemo(
+    () => recommendationsQuery.data ?? [],
+    [recommendationsQuery.data],
+  )
+  const filteredRecommendations = useMemo(() => {
+    if (!filterParentCategory && !filterChildCategory) {
+      return recommendations
+    }
+    return recommendations.filter(item => {
+      if (item.categoryId === undefined || item.categoryId === null) {
+        return false
+      }
+      const categoryKey = item.categoryId.toString()
+      const metaEntry = categoryMeta.get(categoryKey)
+      if (!metaEntry) {
+        return false
+      }
+      if (filterChildCategory) {
+        return metaEntry.option.key === filterChildCategory.key
+      }
+      if (filterParentCategory) {
+        return metaEntry.parentKey === filterParentCategory.key
+      }
+      return true
+    })
+  }, [recommendations, filterParentCategory, filterChildCategory, categoryMeta])
+  const hasRecommendations = filteredRecommendations.length > 0
+  const hasCategoryFilter = Boolean(filterParentCategory || filterChildCategory)
+
+  useEffect(() => {
+    setDiscountOverrides(prev => {
+      if (Object.keys(prev).length === 0) {
+        return prev
+      }
+      const validKeys = new Set(recommendations.map(item => `${item.productId}-${item.lotId}`))
+      let changed = false
+      const next: Record<string, number> = {}
+      Object.entries(prev).forEach(([key, value]) => {
+        if (validKeys.has(key)) {
+          next[key] = value
+        } else {
+          changed = true
+        }
+      })
+      return changed ? next : prev
+    })
+  }, [recommendations])
+
+  const getRecommendationKey = (item: MarkdownRecommendation) => `${item.productId}-${item.lotId}`
+
+  const getDiscountForRecommendation = (item: MarkdownRecommendation) => {
+    const key = getRecommendationKey(item)
+    const override = discountOverrides[key]
+    return typeof override === 'number' ? override : item.suggestedDiscountPct
+  }
+
+  const shouldOverrideFloor = (item: MarkdownRecommendation, discount: number) => {
+    if (typeof item.floorSafeDiscountPct === 'number') {
+      return discount - item.floorSafeDiscountPct > 0.00005
+    }
+    return Boolean(item.requiresFloorOverride && discount > 0)
+  }
+
+  const handleDiscountOverrideChange =
+    (item: MarkdownRecommendation) => (event: ChangeEvent<HTMLInputElement>) => {
+      const key = getRecommendationKey(item)
+      const nextValue = Number(event.target.value)
+      if (Number.isNaN(nextValue)) {
+        setDiscountOverrides(prev => {
+          if (!(key in prev)) {
+            return prev
+          }
+          const next = { ...prev }
+          delete next[key]
+          return next
+        })
+        return
+      }
+      const clampedPct = Math.min(100, Math.max(0, nextValue))
+      const decimal = clampedPct / 100
+      if (Math.abs(decimal - item.suggestedDiscountPct) < 0.00005) {
+        setDiscountOverrides(prev => {
+          if (!(key in prev)) {
+            return prev
+          }
+          const next = { ...prev }
+          delete next[key]
+          return next
+        })
+        return
+      }
+      setDiscountOverrides(prev => ({ ...prev, [key]: decimal }))
+    }
+
+  const describeProduct = (item: MarkdownRecommendation) =>
+    item.productName ?? `Product ${item.productId}`
+
+  const openConfirmApplyAll = () => {
+    if (!hasRecommendations || applyAllMutation.isPending) {
+      return
+    }
+    const overrides = filteredRecommendations.filter(item =>
+      shouldOverrideFloor(item, getDiscountForRecommendation(item)),
+    ).length
+    setPendingApplyAll({ total: filteredRecommendations.length, overrides })
+  }
+
+  const handleApplyAllConfirmed = () => {
+    if (!pendingApplyAll || applyAllMutation.isPending) {
+      return
+    }
+    const payload: MarkdownApplyBulkRequest = {
+      items: filteredRecommendations.map(item => {
+        const discount = getDiscountForRecommendation(item)
+        return {
+          productId: item.productId,
+          lotId: item.lotId,
+          discountPct: discount,
+          overrideFloor: shouldOverrideFloor(item, discount),
+        }
+      }),
+    }
+    applyAllMutation.mutate(payload, {
+      onSettled: () => setPendingApplyAll(null),
+    })
+  }
+
+  const handleCancelApplyAll = () => {
+    if (applyAllMutation.isPending) {
+      return
+    }
+    setPendingApplyAll(null)
+  }
+
+  const openConfirmApplyDialog = (item: MarkdownRecommendation) => {
+    const discount = getDiscountForRecommendation(item)
+    const override = shouldOverrideFloor(item, discount)
+    setPendingApply({ item, discount, requiresOverride: override })
+  }
+
+  const handleConfirmApply = () => {
+    if (!pendingApply) {
+      return
+    }
+    const payload = {
+      productId: pendingApply.item.productId,
+      lotId: pendingApply.item.lotId,
+      discountPct: pendingApply.discount,
+      overrideFloor: pendingApply.requiresOverride,
+    }
+    applyMutation.mutate(payload, {
+      onSuccess: () => {
+        setPendingApply(null)
+      },
+    })
+  }
+
+  const handleCancelApply = () => {
+    if (applyMutation.isPending) {
+      return
+    }
+    setPendingApply(null)
+  }
 
   const openCreateRuleDialog = () => {
     setRuleDialogState({ open: true, mode: 'create' })
@@ -338,21 +687,47 @@ export const MarkdownsPage = () => {
     _event: SyntheticEvent<Element, Event>,
     option: ParentCategoryOption | null,
   ) => {
-    setRuleForm(prev => ({
-      ...prev,
-      parentCategory: option,
-      childCategory: null,
-    }))
+    setRuleForm(prev => {
+      const preset = resolveMarginPreset(option?.key)
+      return {
+        ...prev,
+        parentCategory: option,
+        childCategory: null,
+        floorPercentOfCost: preset ?? prev.floorPercentOfCost,
+      }
+    })
   }
 
   const handleChildCategoryChange = (
     _event: SyntheticEvent<Element, Event>,
     option: CategoryOption | null,
   ) => {
-    setRuleForm(prev => ({
-      ...prev,
-      childCategory: option ?? null,
-    }))
+    setRuleForm(prev => {
+      const key = option?.key ?? prev.parentCategory?.key ?? null
+      const preset = resolveMarginPreset(key)
+      return {
+        ...prev,
+        childCategory: option ?? null,
+        floorPercentOfCost: preset ?? prev.floorPercentOfCost,
+      }
+    })
+  }
+  useEffect(() => {
+    setFloorInputValue(
+      Number.isNaN(ruleForm.floorPercentOfCost) ? '' : ruleForm.floorPercentOfCost.toString(),
+    )
+  }, [ruleForm.floorPercentOfCost])
+  const handleFloorPercentChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const { value } = event.target
+    setFloorInputValue(value)
+    if (value === '' || value === '-' || value === '-.' || value === '-0.') {
+      return
+    }
+    const parsed = Number(value)
+    if (Number.isNaN(parsed)) {
+      return
+    }
+    setRuleForm(prev => ({ ...prev, floorPercentOfCost: parsed }))
   }
 
   const handleRuleFieldChange =
@@ -374,14 +749,22 @@ export const MarkdownsPage = () => {
         ? 0
         : Math.max(0, Math.trunc(ruleForm.daysToExpiry)),
       discountPercent: percentToFraction(ruleForm.discountPercent),
-      floorPercentOfCost: percentToFraction(ruleForm.floorPercentOfCost),
+      floorPercentOfCost: percentToFraction(ruleForm.floorPercentOfCost, true),
     }
 
-    if (ruleDialogState.mode === 'edit' && ruleDialogState.rule) {
-      updateRuleMutation.mutate({ ruleId: ruleDialogState.rule.id, payload })
-    } else {
-      createRuleMutation.mutate(payload)
+    const submission: PendingRuleSubmission = {
+      payload,
+      mode: ruleDialogState.mode,
+      ruleId: ruleDialogState.rule?.id,
+      floorPercentDisplay: ruleForm.floorPercentOfCost,
     }
+
+    if (ruleForm.floorPercentOfCost < 0) {
+      setPendingLossSubmission(submission)
+      return
+    }
+
+    submitRule(submission)
   }
 
   const handleDeleteRule = () => {
@@ -390,8 +773,26 @@ export const MarkdownsPage = () => {
     }
     deleteRuleMutation.mutate(ruleToDelete.id)
   }
+  const handleRevertDecision = (decisionId: number | null | undefined) => {
+    if (!decisionId) {
+      return
+    }
+    setRevertingDecisionId(decisionId)
+    revertDecisionMutation.mutate(decisionId)
+  }
+  const handleLossWarningCancel = () => {
+    setPendingLossSubmission(null)
+  }
+  const handleLossWarningConfirm = () => {
+    if (!pendingLossSubmission) {
+      return
+    }
+    submitRule(pendingLossSubmission)
+    setPendingLossSubmission(null)
+  }
 
   const ruleMutationError = createRuleMutation.error ?? updateRuleMutation.error
+  const pendingLossPercent = pendingLossSubmission?.floorPercentDisplay ?? 0
 
   return (
     <Stack spacing={3}>
@@ -409,20 +810,106 @@ export const MarkdownsPage = () => {
         <Stack spacing={3}>
           <Card>
             <CardContent>
-              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems="center">
-                <TextField
-                  label="Days to expiry"
-                  type="number"
-                  value={days}
-                  onChange={handleDaysChange}
-                  InputProps={{ inputProps: { min: 1, max: 30 } }}
-                />
-                <Button variant="contained" onClick={() => recommendationsQuery.refetch()}>
-                  Refresh
-                </Button>
-              </Stack>
+              <Grid container spacing={2} alignItems="center">
+                <Grid item xs={12} md={3}>
+                  <TextField
+                    label="Days to expiry"
+                    type="number"
+                    value={days}
+                    onChange={handleDaysChange}
+                    InputProps={{ inputProps: { min: 1, max: 30 } }}
+                    fullWidth
+                  />
+                </Grid>
+                <Grid item xs={12} md={3}>
+                  <SingleSelectAutocomplete<ParentCategoryOption>
+                    options={parentCategoryOptions}
+                    value={filterParentCategory}
+                    onChange={(_event, option) => {
+                      setFilterParentCategory(option)
+                      setFilterChildCategory(null)
+                    }}
+                    getOptionLabel={(option: ParentCategoryOption) => option?.label ?? ''}
+                    isOptionEqualToValue={(
+                      option: ParentCategoryOption,
+                      value: ParentCategoryOption,
+                    ) => option.key === value.key}
+                    loading={categoriesQuery.isFetching}
+                    fullWidth
+                    clearOnEscape
+                    renderInput={params => (
+                      <TextField
+                        {...params}
+                        label="Category level 1"
+                        placeholder="All parent categories"
+                      />
+                    )}
+                  />
+                </Grid>
+                <Grid item xs={12} md={3}>
+                  <SingleSelectAutocomplete<CategoryOption>
+                    options={filterChildOptions}
+                    value={filterChildCategory}
+                    onChange={(_event, option) => setFilterChildCategory(option ?? null)}
+                    getOptionLabel={(option: CategoryOption) => option.label}
+                    isOptionEqualToValue={(option: CategoryOption, value: CategoryOption) =>
+                      option.key === value.key
+                    }
+                    disabled={!filterParentCategory || filterChildOptions.length === 0}
+                    fullWidth
+                    renderInput={params => (
+                      <TextField
+                        {...params}
+                        label="Category level 2"
+                        placeholder={
+                          filterParentCategory
+                            ? 'All child categories'
+                            : 'Select a level 1 category first'
+                        }
+                      />
+                    )}
+                  />
+                </Grid>
+                <Grid item xs={12} md={3}>
+                  <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap' }}>
+                    <Button
+                      variant="contained"
+                      onClick={() => recommendationsQuery.refetch()}
+                      disabled={recommendationsQuery.isFetching}
+                    >
+                      Refresh
+                    </Button>
+                    <Button
+                      variant="outlined"
+                      color="secondary"
+                      onClick={openConfirmApplyAll}
+                      disabled={!hasRecommendations || applyAllMutation.isPending}
+                    >
+                      {applyAllMutation.isPending ? 'Applying...' : 'Apply all'}
+                    </Button>
+                  </Stack>
+                </Grid>
+              </Grid>
             </CardContent>
           </Card>
+
+          {applyAllMutation.isSuccess && applyAllMutation.data && (
+            <Alert severity={applyAllMutation.data.failed > 0 ? 'warning' : 'success'}>
+              <Typography component="span" sx={{ display: 'block' }}>
+                {`Applied ${applyAllMutation.data.applied} of ${applyAllMutation.data.requested} markdowns.`}
+              </Typography>
+              {applyAllMutation.data.failed > 0 && applyAllMutation.data.errors.length > 0 && (
+                <Typography component="span" variant="body2">
+                  {`First errors: ${applyAllMutation.data.errors.slice(0, 3).join('; ')}`}
+                </Typography>
+              )}
+            </Alert>
+          )}
+          {applyAllMutation.isError && (
+            <Alert severity="error">
+              {resolveErrorMessage(applyAllMutation.error, 'Unable to apply all markdowns.')}
+            </Alert>
+          )}
 
           {recommendationsQuery.isError && (
             <Alert severity="error">Failed to load recommendations.</Alert>
@@ -434,43 +921,158 @@ export const MarkdownsPage = () => {
                 <TableHead>
                   <TableRow>
                     <TableCell>Product</TableCell>
-                    <TableCell>Lot</TableCell>
+                    <TableCell>Lot received at</TableCell>
                     <TableCell>Days to expiry</TableCell>
                     <TableCell>Suggested discount</TableCell>
-                    <TableCell>Floor % of cost</TableCell>
+                    <TableCell>Floor % of import cost</TableCell>
                     <TableCell />
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {recommendationsQuery.data?.map(item => (
-                    <TableRow key={`${item.productId}-${item.lotId}`}>
-                      <TableCell>{item.productId}</TableCell>
-                      <TableCell>{item.lotId}</TableCell>
-                      <TableCell>{item.daysToExpiry}</TableCell>
-                      <TableCell>{(item.suggestedDiscountPct * 100).toFixed(0)}%</TableCell>
-                      <TableCell>{(item.floorPctOfCost * 100).toFixed(0)}%</TableCell>
-                      <TableCell align="right">
-                        <Button
-                          size="small"
-                          variant="outlined"
-                          onClick={() =>
-                            applyMutation.mutate({
-                              productId: item.productId,
-                              lotId: item.lotId,
-                              discountPct: item.suggestedDiscountPct,
-                              overrideFloor: false,
-                            })
-                          }
-                        >
-                          Apply
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                  {recommendationsQuery.data?.length === 0 && (
+                  {filteredRecommendations.map(item => {
+                    const discount = getDiscountForRecommendation(item)
+                    const receivedAtFormatted =
+                      item.receivedAt && item.receivedAt.length > 0
+                        ? formatDateTime(item.receivedAt, 'dd MMM yyyy')
+                        : null
+                    const receivedAtLabel =
+                      receivedAtFormatted && receivedAtFormatted !== '-'
+                        ? receivedAtFormatted
+                        : null
+                    const categoryKey =
+                      item.categoryId !== undefined && item.categoryId !== null
+                        ? item.categoryId.toString()
+                        : null
+                    const targetMarginPct = getTargetMarginPct(categoryKey) ?? 0
+                    const targetMarginFraction = Math.min(0.99, Math.max(0, targetMarginPct / 100))
+
+                    const floorFraction = Math.min(1, Math.max(0, item.floorPctOfCost))
+
+                    // console.log("floor and margin: ", { floorFraction, targetMarginFraction })
+
+                    const unitCost = item.unitCost ?? 0
+                    const targetPrice =
+                      unitCost === 0 || targetMarginFraction >= 0.99
+                        ? 0
+                        : unitCost / (1 - targetMarginFraction)
+
+                    // const floorPrice = unitCost * floorFraction
+                    const floorPrice = unitCost / (1 - floorFraction)
+
+                    // console.log("target price and floor price", targetPrice.toFixed(2), floorPrice.toFixed)
+
+                    const discountPrice = targetPrice * (1 - discount)
+                    const quantity = Number(item.qtyReceived ?? 0) || 0
+                    const profitDeltaPerUnit = discountPrice - floorPrice
+
+                    // console.log("profit delta per unit: ", profitDeltaPerUnit.toFixed(2))
+
+                    const profitDelta =
+                      quantity > 0 ? profitDeltaPerUnit * quantity : profitDeltaPerUnit
+
+                    const actualMarginRatio =
+                      // unitCost > 0 ? discountPrice / unitCost : null
+                      unitCost > 0 ? (discountPrice - unitCost) / discountPrice : null
+
+                    const profitColor =
+                      profitDelta > 0
+                        ? 'success.main'
+                        : profitDelta < 0
+                          ? 'error.main'
+                          : 'warning.main'
+                    const profitLabel =
+                      profitDelta > 0
+                        ? 'Profit vs floor'
+                        : profitDelta < 0
+                          ? 'Loss vs floor'
+                          : 'At floor'
+                    const profitValue =
+                      Number.isFinite(profitDelta) && profitDelta !== 0
+                        ? profitFormatter.format(Math.abs(profitDelta))
+                        : '0'
+                    const quantityLabel =
+                      quantity > 0 ? ` (Qty ${profitFormatter.format(quantity)})` : ''
+                    const marginText =
+                      actualMarginRatio !== null
+                        ? `Actual margin: ${(actualMarginRatio * 100).toFixed(1)}%`
+                        : 'Margin unavailable'
+                    const isDecisionApplied = Boolean(
+                      item.lotSaleDecisionId && item.lotSaleDecisionApplied,
+                    )
+                    const isReverting =
+                      isDecisionApplied && revertingDecisionId === item.lotSaleDecisionId
+
+                    return (
+                      <TableRow key={`${item.productId}-${item.lotId}`}>
+                        <TableCell>{describeProduct(item)}</TableCell>
+                        <TableCell>
+                          <Typography>
+                            {receivedAtLabel ? `${receivedAtLabel}` : `Lot ${item.lotId}`}
+                          </Typography>
+                        </TableCell>
+                        <TableCell>{item.daysToExpiry}</TableCell>
+                        <TableCell>
+                          <TextField
+                            type="number"
+                            size="small"
+                            value={Number((discount * 100).toFixed(2))}
+                            onChange={handleDiscountOverrideChange(item)}
+                            InputProps={{
+                              inputProps: { min: 0, max: 100, step: 0.5 },
+                              endAdornment: <InputAdornment position="end">%</InputAdornment>,
+                            }}
+                            sx={{ maxWidth: 140 }}
+                          />
+                          <Typography variant="caption" component="div" color={profitColor}>
+                            {profitDelta === 0 ? (
+                              <>
+                                {`At floor price.`}
+                                <br />
+                                {marginText}
+                              </>
+                            ) : (
+                              <>
+                                {`${profitLabel}: ${profitValue}${quantityLabel}.`}
+                                <br />
+                                {marginText}
+                              </>
+                            )}
+                          </Typography>
+                        </TableCell>
+                        <TableCell>{percentFormatter.format(item.floorPctOfCost)}</TableCell>
+                        <TableCell align="right">
+                          {isDecisionApplied ? (
+                            <Button
+                              size="small"
+                              variant="contained"
+                              color="success"
+                              disabled={isReverting || revertDecisionMutation.isPending}
+                              onClick={() => handleRevertDecision(item.lotSaleDecisionId)}
+                            >
+                              {isReverting ? 'Reverting...' : 'Applied'}
+                            </Button>
+                          ) : (
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              disabled={applyMutation.isPending}
+                              onClick={() => openConfirmApplyDialog(item)}
+                            >
+                              Apply
+                            </Button>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
+                  {!recommendationsQuery.isLoading && filteredRecommendations.length === 0 && (
                     <TableRow>
                       <TableCell colSpan={6}>
-                        <Typography color="text.secondary">No markdowns required today.</Typography>
+                        <Typography color="text.secondary">
+                          {hasCategoryFilter
+                            ? 'No markdowns match this category.'
+                            : 'No markdowns required today.'}
+                        </Typography>
                       </TableCell>
                     </TableRow>
                   )}
@@ -478,9 +1080,7 @@ export const MarkdownsPage = () => {
               </Table>
               {applyMutation.isError && (
                 <Alert severity="error" sx={{ mt: 2 }}>
-                  {applyMutation.error instanceof Error
-                    ? applyMutation.error.message
-                    : 'Failed to apply markdown.'}
+                  {resolveErrorMessage(applyMutation.error, 'Failed to apply markdown.')}
                 </Alert>
               )}
               {applyMutation.isSuccess && (
@@ -509,9 +1109,36 @@ export const MarkdownsPage = () => {
                     Control discount levels globally or per category to protect margin.
                   </Typography>
                 </Box>
-                <Button variant="contained" startIcon={<AddIcon />} onClick={openCreateRuleDialog}>
-                  New rule
-                </Button>
+                <Stack
+                  direction={{ xs: 'column', sm: 'row' }}
+                  spacing={2}
+                  alignItems={{ xs: 'stretch', sm: 'center' }}
+                  sx={{ width: { xs: '100%', md: 'auto' } }}
+                >
+                  <TextField
+                    select
+                    size="small"
+                    label="Category"
+                    value={selectedGroupKey}
+                    onChange={event => setSelectedGroupKey(event.target.value)}
+                    sx={{ minWidth: 200 }}
+                    helperText="Filter rules by scope"
+                  >
+                    {groupSelectOptions.map(option => (
+                      <MenuItem key={option.key} value={option.key}>
+                        {option.label}
+                      </MenuItem>
+                    ))}
+                  </TextField>
+                  <Button
+                    variant="contained"
+                    startIcon={<AddIcon />}
+                    onClick={openCreateRuleDialog}
+                    sx={{ whiteSpace: 'nowrap' }}
+                  >
+                    New rule
+                  </Button>
+                </Stack>
               </Stack>
 
               {rulesQuery.isFetching && <LinearProgress sx={{ mt: 2 }} />}
@@ -525,23 +1152,22 @@ export const MarkdownsPage = () => {
               <Table size="small" sx={{ mt: 2 }}>
                 <TableHead>
                   <TableRow>
-                    <TableCell>Scope</TableCell>
                     <TableCell>Days to expiry</TableCell>
                     <TableCell>Discount</TableCell>
-                    <TableCell>Floor % of cost</TableCell>
+                    <TableCell>Floor % of import cost</TableCell>
                     <TableCell align="right">Actions</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   {rulesQuery.isLoading ? (
                     <TableRow>
-                      <TableCell colSpan={5}>
+                      <TableCell colSpan={4}>
                         <Typography color="text.secondary">Loading rules…</Typography>
                       </TableCell>
                     </TableRow>
                   ) : sortedRules.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={5}>
+                      <TableCell colSpan={4}>
                         <Box py={3} textAlign="center">
                           <Typography variant="subtitle1">No markdown rules yet.</Typography>
                           <Typography color="text.secondary">
@@ -552,34 +1178,47 @@ export const MarkdownsPage = () => {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    sortedRules.map(rule => (
-                      <TableRow key={rule.id} hover>
-                        <TableCell>{rule.categoryName ?? 'All categories'}</TableCell>
-                        <TableCell>D-{rule.daysToExpiry}</TableCell>
-                        <TableCell>{percentFormatter.format(rule.discountPercent)}</TableCell>
-                        <TableCell>{percentFormatter.format(rule.floorPercentOfCost)}</TableCell>
-                        <TableCell align="right">
-                          <Tooltip title="Edit rule">
-                            <IconButton
-                              size="small"
-                              onClick={() => openEditRuleDialog(rule)}
-                              aria-label="Edit markdown rule"
-                            >
-                              <EditOutlinedIcon fontSize="small" />
-                            </IconButton>
-                          </Tooltip>
-                          <Tooltip title="Delete rule">
-                            <IconButton
-                              size="small"
-                              color="error"
-                              onClick={() => setRuleToDelete(rule)}
-                              aria-label="Delete markdown rule"
-                            >
-                              <DeleteOutlineIcon fontSize="small" />
-                            </IconButton>
-                          </Tooltip>
-                        </TableCell>
-                      </TableRow>
+                    visibleGroups.map(group => (
+                      <Fragment key={group.key}>
+                        <TableRow>
+                          <TableCell
+                            colSpan={4}
+                            sx={{ bgcolor: theme => theme.palette.action.hover }}
+                          >
+                            <Typography variant="subtitle2">{group.label}</Typography>
+                          </TableCell>
+                        </TableRow>
+                        {group.rules.map(rule => (
+                          <TableRow key={rule.id} hover>
+                            <TableCell>D-{rule.daysToExpiry}</TableCell>
+                            <TableCell>{percentFormatter.format(rule.discountPercent)}</TableCell>
+                            <TableCell>
+                              {percentFormatter.format(rule.floorPercentOfCost)}
+                            </TableCell>
+                            <TableCell align="right">
+                              <Tooltip title="Edit rule">
+                                <IconButton
+                                  size="small"
+                                  onClick={() => openEditRuleDialog(rule)}
+                                  aria-label="Edit markdown rule"
+                                >
+                                  <EditOutlinedIcon fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
+                              <Tooltip title="Delete rule">
+                                <IconButton
+                                  size="small"
+                                  color="error"
+                                  onClick={() => setRuleToDelete(rule)}
+                                  aria-label="Delete markdown rule"
+                                >
+                                  <DeleteOutlineIcon fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </Fragment>
                     ))
                   )}
                 </TableBody>
@@ -588,6 +1227,66 @@ export const MarkdownsPage = () => {
           </Card>
         </Stack>
       )}
+
+      <Dialog open={Boolean(pendingApply)} onClose={handleCancelApply}>
+        <DialogTitle>Apply markdown</DialogTitle>
+        <DialogContent>
+          <Typography>
+            {pendingApply
+              ? `Apply ${percentFormatter.format(pendingApply.discount)} to ${describeProduct(pendingApply.item)} (Lot ${pendingApply.item.lotId})?`
+              : ''}
+          </Typography>
+          {pendingApply?.requiresOverride && (
+            <Alert severity="warning" sx={{ mt: 2 }}>
+              {`This discount exceeds the floor guard. Floor allows ${
+                pendingApply.item.floorSafeDiscountPct !== undefined &&
+                pendingApply.item.floorSafeDiscountPct !== null
+                  ? percentFormatter.format(pendingApply.item.floorSafeDiscountPct)
+                  : 'a smaller discount'
+              }.`}
+            </Alert>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCancelApply} disabled={applyMutation.isPending}>
+            Cancel
+          </Button>
+          <Button
+            onClick={handleConfirmApply}
+            variant="contained"
+            disabled={applyMutation.isPending}
+          >
+            {applyMutation.isPending ? 'Applying...' : 'Confirm'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={Boolean(pendingApplyAll)} onClose={handleCancelApplyAll}>
+        <DialogTitle>Apply all markdowns</DialogTitle>
+        <DialogContent>
+          <Typography>
+            {pendingApplyAll
+              ? `Apply ${pendingApplyAll.total} markdown suggestions${
+                  pendingApplyAll.overrides > 0
+                    ? ` (${pendingApplyAll.overrides} require floor overrides)`
+                    : ''
+                }?`
+              : ''}
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCancelApplyAll} disabled={applyAllMutation.isPending}>
+            Cancel
+          </Button>
+          <Button
+            onClick={handleApplyAllConfirmed}
+            variant="contained"
+            disabled={applyAllMutation.isPending}
+          >
+            {applyAllMutation.isPending ? 'Applying...' : 'Confirm'}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <Dialog open={ruleDialogState.open} onClose={closeRuleDialog} fullWidth maxWidth="sm">
         <DialogTitle>
@@ -668,13 +1367,22 @@ export const MarkdownsPage = () => {
                 required
               />
               <TextField
-                label="Floor (% of cost)"
+                label="Floor (% of import cost)"
                 type="number"
-                value={ruleForm.floorPercentOfCost}
-                onChange={handleRuleFieldChange('floorPercentOfCost')}
-                InputProps={{ inputProps: { min: 0, max: 100, step: 0.5 } }}
+                value={floorInputValue}
+                onChange={handleFloorPercentChange}
+                InputProps={{ inputProps: { min: -100, max: 100, step: 0.5 } }}
                 helperText="Prevent markdowns from going below this share of cost."
               />
+              {selectedMinMarginPct !== null && (
+                <Box sx={{ mt: 1 }}>
+                  <Chip
+                    color="error"
+                    size="small"
+                    label={`This category's minimum margin percent is ${selectedMinMarginPct.toFixed(1)}%`}
+                  />
+                </Box>
+              )}
               {ruleMutationError && (
                 <Alert severity="error">
                   {resolveErrorMessage(ruleMutationError, 'Unable to save markdown rule.')}
@@ -692,6 +1400,26 @@ export const MarkdownsPage = () => {
             disabled={createRuleMutation.isPending || updateRuleMutation.isPending}
           >
             {ruleDialogState.mode === 'create' ? 'Create rule' : 'Save changes'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={Boolean(pendingLossSubmission)} onClose={handleLossWarningCancel}>
+        <DialogTitle>Sell at a loss?</DialogTitle>
+        <DialogContent>
+          <Typography>
+            {`You're about to set a floor of ${pendingLossPercent.toFixed(
+              1,
+            )}% of import cost, which means selling below your cost basis.`}
+          </Typography>
+          <Typography sx={{ mt: 1 }} color="text.secondary">
+            Are you sure you want to continue?
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleLossWarningCancel}>Cancel</Button>
+          <Button color="error" variant="contained" onClick={handleLossWarningConfirm}>
+            Continue
           </Button>
         </DialogActions>
       </Dialog>
