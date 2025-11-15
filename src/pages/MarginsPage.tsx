@@ -1,5 +1,6 @@
 import DownloadIcon from '@mui/icons-material/Download'
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined'
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined'
 import UploadFileIcon from '@mui/icons-material/UploadFile'
 import {
   Alert,
@@ -35,29 +36,33 @@ import type {
   UpdateMarginProfileRequest,
 } from '../types/margins'
 
-const PRICE_SENSITIVITY_COLORS: Record<
-  string,
-  'error' | 'warning' | 'success' | 'info' | 'default'
-> = {
-  high: 'error',
-  medium: 'warning',
-  low: 'success',
+type PriceSensitivityStyle = {
+  backgroundColor: string
+  color: string
 }
 
-const getPriceSensitivityColor = (
-  value: string,
-): 'error' | 'warning' | 'success' | 'info' | 'default' => {
+const PRICE_SENSITIVITY_STYLES: Record<
+  'high' | 'medium' | 'low' | 'default',
+  PriceSensitivityStyle
+> = {
+  high: { backgroundColor: '#c62828', color: '#fff' },
+  medium: { backgroundColor: '#fdd835', color: '#3e2723' },
+  low: { backgroundColor: '#2e7d32', color: '#e8f5e9' },
+  default: { backgroundColor: '#546e7a', color: '#fff' },
+}
+
+const getPriceSensitivityChipStyles = (value: string): PriceSensitivityStyle => {
   const normalized = value.trim().toLowerCase()
   if (normalized.includes('high')) {
-    return PRICE_SENSITIVITY_COLORS.high
+    return PRICE_SENSITIVITY_STYLES.high
   }
   if (normalized.includes('medium')) {
-    return PRICE_SENSITIVITY_COLORS.medium
+    return PRICE_SENSITIVITY_STYLES.medium
   }
   if (normalized.includes('low')) {
-    return PRICE_SENSITIVITY_COLORS.low
+    return PRICE_SENSITIVITY_STYLES.low
   }
-  return 'info'
+  return PRICE_SENSITIVITY_STYLES.default
 }
 
 const marginProfileColor = (value: string) => {
@@ -74,6 +79,53 @@ const numberFormatter = new Intl.NumberFormat(undefined, {
   minimumFractionDigits: 0,
   maximumFractionDigits: 2,
 })
+
+const priceSensitivityTooltipContent = (
+  <Stack spacing={0.5}>
+    <Typography variant="body2" fontWeight={600}>
+      Price sensitivity tiers
+    </Typography>
+    <Typography variant="caption" component="div">
+      <Box component="span" fontWeight={600}>
+        High:
+      </Box>{' '}
+      Most elastic categories (frequent promos) — keep guardrails lean.
+    </Typography>
+    <Typography variant="caption" component="div">
+      <Box component="span" fontWeight={600}>
+        Medium:
+      </Box>{' '}
+      Balanced elasticity — monitor competitors when tuning margins.
+    </Typography>
+    <Typography variant="caption" component="div">
+      <Box component="span" fontWeight={600}>
+        Low:
+      </Box>{' '}
+      Pricing power categories — room for wider guardrails.
+    </Typography>
+  </Stack>
+)
+
+const marginProfileTooltipContent = (
+  <Stack spacing={0.5}>
+    <Typography variant="body2" fontWeight={600}>
+      Margin profiles
+    </Typography>
+    <Typography variant="caption">
+      Short labels (e.g. `dairy_beverage`) describing the guardrail playbook applied to a parent
+      category.
+    </Typography>
+    <Typography variant="caption">
+      They drive reporting and make it easy to compare targets across similar assortments.
+    </Typography>
+  </Stack>
+)
+
+const percentageTooltipContent = {
+  min: 'Lowest acceptable realized margin percent for the category.',
+  target: 'Mid-point guardrail used for planning / pricing reviews.',
+  max: 'Upper guardrail — margins above this point may signal overpricing.',
+}
 
 export const MarginsPage = () => {
   const [page, setPage] = useState(0)
@@ -170,7 +222,7 @@ export const MarginsPage = () => {
     const rows = profiles.map(profile => ({
       parent_category_id: profile.parentCategoryId,
       parent_category_name: profile.parentCategoryName,
-      margin_profile: profile.marginProfile,
+      profile: profile.marginProfile,
       price_sensitivity: profile.priceSensitivity,
       min_margin_pct: profile.minMarginPct,
       target_margin_pct: profile.targetMarginPct,
@@ -246,7 +298,9 @@ export const MarginsPage = () => {
         const parentCategoryName = normalizeString(
           row['parent_category_name'] ?? row['Parent Category Name'] ?? row['parentCategoryName'],
         )
-        const marginProfile = normalizeString(row['margin_profile'] ?? row['Margin Profile'])
+        const marginProfile = normalizeString(
+          row['profile'] ?? row['Profile'] ?? row['margin_profile'] ?? row['Margin Profile'],
+        )
         const priceSensitivity = normalizeString(
           row['price_sensitivity'] ?? row['Price Sensitivity'] ?? row['priceSensitivity'],
         )
@@ -350,11 +404,61 @@ export const MarginsPage = () => {
             <TableRow>
               <TableCell width="60px">No.</TableCell>
               <TableCell>Parent category</TableCell>
-              <TableCell>Margin profile</TableCell>
-              <TableCell>Price sensitivity</TableCell>
-              <TableCell align="right">Min %</TableCell>
-              <TableCell align="right">Target %</TableCell>
-              <TableCell align="right">Max %</TableCell>
+              <TableCell>
+                <Stack direction="row" spacing={0.5} alignItems="center">
+                  <Box component="span">Margin profile</Box>
+                  <Tooltip title={marginProfileTooltipContent} arrow placement="top">
+                    <InfoOutlinedIcon
+                      fontSize="small"
+                      sx={{ color: 'text.secondary', cursor: 'help' }}
+                    />
+                  </Tooltip>
+                </Stack>
+              </TableCell>
+              <TableCell>
+                <Stack direction="row" spacing={0.5} alignItems="center">
+                  <Box component="span">Price sensitivity</Box>
+                  <Tooltip title={priceSensitivityTooltipContent} arrow placement="top">
+                    <InfoOutlinedIcon
+                      fontSize="small"
+                      sx={{ color: 'text.secondary', cursor: 'help' }}
+                    />
+                  </Tooltip>
+                </Stack>
+              </TableCell>
+              <TableCell align="right">
+                <Stack direction="row" spacing={0.5} alignItems="center" justifyContent="flex-end">
+                  <Box component="span">Min %</Box>
+                  <Tooltip title={percentageTooltipContent.min} arrow placement="top">
+                    <InfoOutlinedIcon
+                      fontSize="small"
+                      sx={{ color: 'text.secondary', cursor: 'help' }}
+                    />
+                  </Tooltip>
+                </Stack>
+              </TableCell>
+              <TableCell align="right">
+                <Stack direction="row" spacing={0.5} alignItems="center" justifyContent="flex-end">
+                  <Box component="span">Target %</Box>
+                  <Tooltip title={percentageTooltipContent.target} arrow placement="top">
+                    <InfoOutlinedIcon
+                      fontSize="small"
+                      sx={{ color: 'text.secondary', cursor: 'help' }}
+                    />
+                  </Tooltip>
+                </Stack>
+              </TableCell>
+              <TableCell align="right">
+                <Stack direction="row" spacing={0.5} alignItems="center" justifyContent="flex-end">
+                  <Box component="span">Max %</Box>
+                  <Tooltip title={percentageTooltipContent.max} arrow placement="top">
+                    <InfoOutlinedIcon
+                      fontSize="small"
+                      sx={{ color: 'text.secondary', cursor: 'help' }}
+                    />
+                  </Tooltip>
+                </Stack>
+              </TableCell>
               <TableCell align="right">Actions</TableCell>
             </TableRow>
           </TableHead>
@@ -387,55 +491,65 @@ export const MarginsPage = () => {
                 </TableCell>
               </TableRow>
             ) : (
-              paginatedProfiles.map((profile, index) => (
-                <TableRow key={profile.id} hover>
-                  <TableCell>
-                    <Typography fontWeight={600}>{page * rowsPerPage + index + 1}</Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Typography fontWeight={600}>{profile.parentCategoryName}</Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Tooltip title={profile.notes || 'No notes available'} arrow>
+              paginatedProfiles.map((profile, index) => {
+                const priceSensitivityStyles = getPriceSensitivityChipStyles(
+                  profile.priceSensitivity,
+                )
+                return (
+                  <TableRow key={profile.id} hover>
+                    <TableCell>
+                      <Typography fontWeight={600}>{page * rowsPerPage + index + 1}</Typography>
+                    </TableCell>
+                    <TableCell>
+                      <Typography fontWeight={600}>{profile.parentCategoryName}</Typography>
+                    </TableCell>
+                    <TableCell>
+                      <Tooltip title={profile.notes || 'No notes available'} arrow>
+                        <Chip
+                          label={profile.marginProfile}
+                          size="small"
+                          sx={{
+                            bgcolor: marginProfileColor(profile.marginProfile),
+                            color: '#fff',
+                            textTransform: 'none',
+                          }}
+                        />
+                      </Tooltip>
+                    </TableCell>
+                    <TableCell>
                       <Chip
-                        label={profile.marginProfile}
+                        label={profile.priceSensitivity}
                         size="small"
                         sx={{
-                          bgcolor: marginProfileColor(profile.marginProfile),
-                          color: '#fff',
+                          bgcolor: priceSensitivityStyles.backgroundColor,
+                          color: priceSensitivityStyles.color,
+                          fontWeight: 600,
                           textTransform: 'none',
                         }}
                       />
-                    </Tooltip>
-                  </TableCell>
-                  <TableCell>
-                    <Chip
-                      label={profile.priceSensitivity}
-                      size="small"
-                      color={getPriceSensitivityColor(profile.priceSensitivity)}
-                    />
-                  </TableCell>
-                  <TableCell align="right">
-                    {numberFormatter.format(profile.minMarginPct)}%
-                  </TableCell>
-                  <TableCell align="right">
-                    {numberFormatter.format(profile.targetMarginPct)}%
-                  </TableCell>
-                  <TableCell align="right">
-                    {numberFormatter.format(profile.maxMarginPct)}%
-                  </TableCell>
-                  <TableCell align="right">
-                    <Button
-                      size="small"
-                      variant="outlined"
-                      startIcon={<EditOutlinedIcon fontSize="small" />}
-                      onClick={() => openEditDialog(profile)}
-                    >
-                      Edit targets
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))
+                    </TableCell>
+                    <TableCell align="right">
+                      {numberFormatter.format(profile.minMarginPct)}%
+                    </TableCell>
+                    <TableCell align="right">
+                      {numberFormatter.format(profile.targetMarginPct)}%
+                    </TableCell>
+                    <TableCell align="right">
+                      {numberFormatter.format(profile.maxMarginPct)}%
+                    </TableCell>
+                    <TableCell align="right">
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        startIcon={<EditOutlinedIcon fontSize="small" />}
+                        onClick={() => openEditDialog(profile)}
+                      >
+                        Edit targets
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                )
+              })
             )}
           </TableBody>
         </Table>

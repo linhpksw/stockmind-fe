@@ -209,10 +209,11 @@ export const CategoriesPage = () => {
         (row.parentCategoryId ? codeByCategoryId.get(row.parentCategoryId) : undefined)
 
       return {
+        categoryId: row.categoryId,
         code: row.code,
         name: row.name,
         parentCode: inferredParentCode,
-        parentCategoryId: inferredParentCode ? undefined : row.parentCategoryId,
+        parentCategoryId: row.parentCategoryId,
       }
     })
   }
@@ -271,8 +272,9 @@ export const CategoriesPage = () => {
                 Bulk actions
               </Typography>
               <Typography variant="caption" color="text.secondary">
-                Import from Excel using columns: <strong>code</strong>, <strong>name</strong>, and
-                optional <strong>parent_category_id</strong> or <strong>parent_code</strong>.
+                Import from Excel using columns: <strong>category_id</strong>, <strong>code</strong>
+                , <strong>name</strong>, plus optional <strong>parent_category_id</strong> or{' '}
+                <strong>parent_code</strong>.
               </Typography>
             </Stack>
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} width="100%">
