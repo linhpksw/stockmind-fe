@@ -1,5 +1,7 @@
 import KeyboardArrowDown from '@mui/icons-material/KeyboardArrowDown'
 import KeyboardArrowRight from '@mui/icons-material/KeyboardArrowRight'
+import FilterAltIcon from '@mui/icons-material/FilterAlt'
+import Autocomplete, { type AutocompleteRenderInputParams } from '@mui/material/Autocomplete'
 import {
   Alert,
   Avatar,
@@ -16,12 +18,25 @@ import {
   TableHead,
   TablePagination,
   TableRow,
+  TextField,
   Typography,
 } from '@mui/material'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Fragment, useEffect, useMemo, useState } from 'react'
-import { listGrnSummary, syncReceiving } from '../api/grn'
+import {
+  Fragment,
+  useEffect,
+  useMemo,
+  useState,
+  type ChangeEvent,
+  type ReactElement,
+  type SyntheticEvent,
+} from 'react'
+import { fetchAllGrnSummaries, syncReceiving } from '../api/grn'
 import { SectionHeading } from '../components/common/SectionHeading'
+import { useCategoryFilters, type ParentCategoryOption } from '../hooks/useCategoryFilters'
+import { useProductCategoryMap } from '../hooks/useProductCategoryMap'
+import { useSupplierOptions } from '../hooks/useSupplierOptions'
+import type { CategoryOption } from '../utils/categories'
 import type { GrnSummary } from '../types/grn'
 import { formatDateTime } from '../utils/formatters'
 
@@ -33,31 +48,145 @@ const currencyFormatter = new Intl.NumberFormat('vi-VN', {
 
 const getInitials = (name: string) => name.trim().slice(0, 2).toUpperCase() || 'PD'
 
+const BaseAutocomplete = Autocomplete as unknown as (props: Record<string, unknown>) => ReactElement
+
+const useDebouncedValue = <T,>(value: T, delay = 300): T => {
+  const [debounced, setDebounced] = useState(value)
+
+  useEffect(() => {
+    const handler = setTimeout(() => setDebounced(value), delay)
+    return () => clearTimeout(handler)
+  }, [value, delay])
+
+  return debounced
+}
+
 export const ReceivingPage = () => {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
   const [page, setPage] = useState(0)
   const [rowsPerPage, setRowsPerPage] = useState(10)
+  const [searchFilter, setSearchFilter] = useState('')
+  const [supplierFilter, setSupplierFilter] = useState<string[]>([])
+  const [statusFilter, setStatusFilter] = useState<string[]>([])
+  const [parentCategoryFilter, setParentCategoryFilter] = useState<ParentCategoryOption[]>([])
+  const [childCategoryFilter, setChildCategoryFilter] = useState<CategoryOption[]>([])
   const queryClient = useQueryClient()
 
   const summaryQuery = useQuery({
-    queryKey: ['grn-summary', page, rowsPerPage],
-    queryFn: () => listGrnSummary(page + 1, rowsPerPage),
+    queryKey: ['grn-summary', 'all'],
+    queryFn: fetchAllGrnSummaries,
   })
+  const {
+    parentCategoryOptions,
+    childCategoryLookup,
+    childCategoryOptions,
+    categoryMeta,
+    isLoading: isCategoryLoading,
+  } = useCategoryFilters()
+  const { productCategoryMap } = useProductCategoryMap(categoryMeta)
+  const { supplierOptions, isLoading: isSupplierLoading } = useSupplierOptions()
 
   const syncMutation = useMutation({
     mutationFn: () => syncReceiving(page + 1, rowsPerPage),
-    onSuccess: data => {
-      queryClient.setQueryData(['grn-summary', page, rowsPerPage], data)
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['grn-summary', 'all'] })
       setExpanded({})
     },
   })
 
-  const summaries = useMemo<GrnSummary[]>(() => summaryQuery.data?.data ?? [], [summaryQuery.data])
+  const summaries = useMemo<GrnSummary[]>(() => summaryQuery.data ?? [], [summaryQuery.data])
   const pendingCount = useMemo(
     () => summaries.filter(summary => summary.status !== 'RECEIVED').length,
     [summaries],
   )
-  const totalRows = summaryQuery.data?.total ?? 0
+  const statusOptions = useMemo(
+    () => Array.from(new Set(summaries.map(grn => grn.status))),
+    [summaries],
+  )
+
+  const debouncedSearch = useDebouncedValue(searchFilter)
+
+  const derivedChildCategoryOptions = useMemo(() => {
+    if (parentCategoryFilter.length === 0) {
+      return childCategoryOptions
+    }
+    const aggregated = parentCategoryFilter.flatMap(
+      option => childCategoryLookup.get(option.key) ?? [],
+    )
+    const unique = new Map(aggregated.map(option => [option.key, option]))
+    return Array.from(unique.values()).sort((a, b) => a.label.localeCompare(b.label))
+  }, [parentCategoryFilter, childCategoryLookup, childCategoryOptions])
+
+  const selectedParentKeys = useMemo(
+    () => new Set(parentCategoryFilter.map(option => option.key)),
+    [parentCategoryFilter],
+  )
+  const selectedChildKeys = useMemo(
+    () => new Set(childCategoryFilter.map(option => option.key)),
+    [childCategoryFilter],
+  )
+
+  const filteredSummaries = useMemo(() => {
+    const search = debouncedSearch.trim().toLowerCase()
+    return summaries.filter(grn => {
+      const matchesSupplier =
+        supplierFilter.length === 0 || supplierFilter.includes(grn.supplierName)
+      const matchesStatus = statusFilter.length === 0 || statusFilter.includes(grn.status)
+      const matchesParent =
+        selectedParentKeys.size === 0 ||
+        grn.items.some(item => {
+          const meta = productCategoryMap.get(item.productId)
+          return meta && selectedParentKeys.has(meta.parentKey)
+        })
+      const matchesChild =
+        selectedChildKeys.size === 0 ||
+        grn.items.some(item => {
+          const meta = productCategoryMap.get(item.productId)
+          return meta && selectedChildKeys.has(meta.option.key)
+        })
+      const matchesSearch =
+        !search ||
+        grn.supplierName.toLowerCase().includes(search) ||
+        grn.items.some(item => item.productName.toLowerCase().includes(search))
+      return matchesSupplier && matchesStatus && matchesParent && matchesChild && matchesSearch
+    })
+  }, [
+    summaries,
+    supplierFilter,
+    statusFilter,
+    debouncedSearch,
+    selectedParentKeys,
+    selectedChildKeys,
+    productCategoryMap,
+  ])
+
+  const hasFilters =
+    Boolean(searchFilter) ||
+    supplierFilter.length > 0 ||
+    statusFilter.length > 0 ||
+    parentCategoryFilter.length > 0 ||
+    childCategoryFilter.length > 0
+
+  const totalFilteredSummaries = filteredSummaries.length
+  const paginatedSummaries = useMemo(() => {
+    const start = page * rowsPerPage
+    return filteredSummaries.slice(start, start + rowsPerPage)
+  }, [filteredSummaries, page, rowsPerPage])
+
+  useEffect(() => {
+    const maxPage = Math.max(Math.ceil(totalFilteredSummaries / rowsPerPage) - 1, 0)
+    if (page > maxPage) {
+      setPage(maxPage)
+    }
+  }, [page, rowsPerPage, totalFilteredSummaries])
+
+  const clearFilters = () => {
+    setSearchFilter('')
+    setSupplierFilter([])
+    setStatusFilter([])
+    setParentCategoryFilter([])
+    setChildCategoryFilter([])
+  }
 
   useEffect(() => {
     setExpanded({})
@@ -177,6 +306,128 @@ export const ReceivingPage = () => {
         }
       />
 
+      <Paper sx={{ p: 2 }}>
+        <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
+          <Stack direction="row" spacing={1} alignItems="center">
+            <FilterAltIcon color="primary" fontSize="small" />
+            <Typography variant="subtitle1" fontWeight={600}>
+              Filter catalog
+            </Typography>
+          </Stack>
+          {hasFilters && (
+            <Button size="small" onClick={clearFilters}>
+              Clear filters
+            </Button>
+          )}
+        </Stack>
+        <Stack
+          direction={{ xs: 'column', md: 'row' }}
+          spacing={2}
+          mt={2}
+          flexWrap="wrap"
+          useFlexGap
+        >
+          <TextField
+            label="Search supplier or product"
+            value={searchFilter}
+            onChange={(event: ChangeEvent<HTMLInputElement>) => setSearchFilter(event.target.value)}
+            size="small"
+            sx={{
+              minWidth: { xs: '100%', md: 240 },
+              flex: { xs: '1 1 100%', md: '1 1 260px' },
+            }}
+          />
+          <BaseAutocomplete
+            multiple
+            options={parentCategoryOptions}
+            value={parentCategoryFilter}
+            onChange={(_event: SyntheticEvent<Element, Event>, value: ParentCategoryOption[]) =>
+              setParentCategoryFilter(value)
+            }
+            getOptionLabel={(option: ParentCategoryOption) => option.label}
+            isOptionEqualToValue={(option: ParentCategoryOption, value: ParentCategoryOption) =>
+              option.key === value.key
+            }
+            renderInput={(params: AutocompleteRenderInputParams) => (
+              <TextField {...params} label="Category level 1" size="small" placeholder="All" />
+            )}
+            sx={{
+              minWidth: { xs: '100%', md: 200 },
+              flex: { xs: '1 1 100%', md: '0 1 220px' },
+            }}
+            loading={isCategoryLoading}
+          />
+          <BaseAutocomplete
+            multiple
+            options={derivedChildCategoryOptions}
+            value={childCategoryFilter}
+            onChange={(_event: SyntheticEvent<Element, Event>, value: CategoryOption[]) =>
+              setChildCategoryFilter(value)
+            }
+            getOptionLabel={(option: CategoryOption) => option.child}
+            isOptionEqualToValue={(option: CategoryOption, value: CategoryOption) =>
+              option.key === value.key
+            }
+            renderInput={(params: AutocompleteRenderInputParams) => (
+              <TextField {...params} label="Category level 2" size="small" placeholder="All" />
+            )}
+            sx={{
+              minWidth: { xs: '100%', md: 200 },
+              flex: { xs: '1 1 100%', md: '0 1 220px' },
+            }}
+            loading={isCategoryLoading}
+          />
+          <BaseAutocomplete
+            multiple
+            options={supplierOptions}
+            value={supplierFilter}
+            onChange={(_event: SyntheticEvent<Element, Event>, value: string[]) =>
+              setSupplierFilter(value)
+            }
+            renderInput={(params: AutocompleteRenderInputParams) => (
+              <TextField {...params} label="Suppliers" size="small" />
+            )}
+            sx={{
+              minWidth: { xs: '100%', md: 200 },
+              flex: { xs: '1 1 100%', md: '0 1 220px' },
+            }}
+            loading={isSupplierLoading}
+          />
+          <BaseAutocomplete
+            multiple
+            options={statusOptions}
+            value={statusFilter}
+            onChange={(_event: SyntheticEvent<Element, Event>, value: string[]) =>
+              setStatusFilter(value)
+            }
+            renderInput={(params: AutocompleteRenderInputParams) => (
+              <TextField {...params} label="Status" size="small" />
+            )}
+            sx={{
+              minWidth: { xs: '100%', md: 200 },
+              flex: { xs: '1 1 100%', md: '0 1 200px' },
+            }}
+          />
+        </Stack>
+        {hasFilters && (
+          <Stack direction="row" spacing={1} mt={2} flexWrap="wrap">
+            {searchFilter && <Chip label={`Search · "${searchFilter}"`} />}
+            {parentCategoryFilter.map(option => (
+              <Chip key={`parent-${option.key}`} label={`Cat 1 · ${option.label}`} />
+            ))}
+            {childCategoryFilter.map(option => (
+              <Chip key={`child-${option.key}`} label={`Cat 2 · ${option.child}`} />
+            ))}
+            {supplierFilter.map(name => (
+              <Chip key={name} label={`Supplier · ${name}`} />
+            ))}
+            {statusFilter.map(status => (
+              <Chip key={status} label={`Status · ${status}`} />
+            ))}
+          </Stack>
+        )}
+      </Paper>
+
       {syncMutation.isError && <Alert severity="error">Unable to sync GRNs.</Alert>}
       {summaryQuery.isError && <Alert severity="error">Failed to load GRNs.</Alert>}
 
@@ -213,8 +464,17 @@ export const ReceivingPage = () => {
                   </Box>
                 </TableCell>
               </TableRow>
+            ) : filteredSummaries.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={7}>
+                  <Typography textAlign="center" py={3}>
+                    No GRNs match the current filters.
+                  </Typography>
+                </TableCell>
+              </TableRow>
             ) : (
-              summaries.map((grn, index) => {
+              paginatedSummaries.map((grn, index) => {
+                const globalIndex = page * rowsPerPage + index + 1
                 const key = buildRowKey(grn)
                 const isExpanded = !!expanded[key]
                 const isPending = grn.status !== 'RECEIVED'
@@ -226,7 +486,7 @@ export const ReceivingPage = () => {
                   <Fragment key={key}>
                     <TableRow>
                       <TableCell>
-                        <Typography fontWeight={600}>{page * rowsPerPage + index + 1}</Typography>
+                        <Typography fontWeight={600}>{globalIndex}</Typography>
                       </TableCell>
                       <TableCell>
                         <Stack direction="row" spacing={1} alignItems="center">
@@ -305,11 +565,11 @@ export const ReceivingPage = () => {
 
       <TablePagination
         component="div"
-        count={totalRows}
+        count={totalFilteredSummaries}
         page={page}
-        onPageChange={(_event, newPage) => setPage(newPage)}
+        onPageChange={(_event: unknown, newPage: number) => setPage(newPage)}
         rowsPerPage={rowsPerPage}
-        onRowsPerPageChange={event => {
+        onRowsPerPageChange={(event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
           setRowsPerPage(parseInt(event.target.value, 10))
           setPage(0)
         }}
