@@ -1,6 +1,7 @@
 import {
   Alert,
   Box,
+  Button,
   Card,
   CardContent,
   Chip,
@@ -9,11 +10,14 @@ import {
   List,
   ListItem,
   ListItemText,
+  Pagination,
+  Snackbar,
   Stack,
   Typography,
 } from '@mui/material'
 import { useQuery } from '@tanstack/react-query'
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { getAlerts } from '../api/alerts'
 import { listProducts } from '../api/products'
 import { getReplenishmentSuggestions } from '../api/replenishment'
@@ -21,9 +25,11 @@ import { StatCard } from '../components/cards/StatCard'
 import { SectionHeading } from '../components/common/SectionHeading'
 import type { AlertsAggregate, LowStock } from '../types/alerts'
 import type { ReplenishmentSuggestion } from '../types/replenishment'
+import { setReplenishmentPrefill } from '../utils/replenishmentPrefill'
 
 const EMPTY_ALERTS: AlertsAggregate = { lowStock: [], expirySoon: [], slowMovers: [] }
 const EMPTY_REPLENISHMENT: ReplenishmentSuggestion[] = []
+const REPLENISHMENT_PAGE_SIZE = 5
 
 const formatProductLabel = (productId: string | number) => `Product ID ${productId}`
 const formatLotLabel = (lotId: string, lotCode?: string) =>
@@ -44,6 +50,7 @@ const formatUnits = (amount: number) => {
 const formatDays = (days: number) => `${days} day${days === 1 ? '' : 's'}`
 
 export const DashboardPage = () => {
+  const navigate = useNavigate()
   const alertsQuery = useQuery({ queryKey: ['alerts'], queryFn: getAlerts })
   const replenishmentQuery = useQuery({
     queryKey: ['replenishment'],
@@ -60,18 +67,33 @@ export const DashboardPage = () => {
       replenishment.length > 0,
     [expiringLots, lowStockItems, replenishment],
   )
-  const productNameLookupQuery = useQuery({
-    queryKey: ['products', 'name-lookup'],
-    queryFn: async (): Promise<Record<string, string>> => {
+  const productLookupQuery = useQuery({
+    queryKey: ['products', 'lookup'],
+    queryFn: async (): Promise<
+      Record<string, { name: string; minStock?: number; supplierId?: string | null }>
+    > => {
       const products = await listProducts()
-      return products.reduce<Record<string, string>>((acc, product) => {
-        acc[product.id] = product.name
+      return products.reduce<
+        Record<string, { name: string; minStock?: number; supplierId?: string | null }>
+      >((acc, product) => {
+        acc[product.id] = {
+          name: product.name,
+          minStock: product.minStock,
+          supplierId: product.supplierId ?? null,
+        }
         return acc
       }, {})
     },
     enabled: shouldFetchProductNames,
     staleTime: 5 * 60 * 1000,
   })
+
+  const [currentPage, setCurrentPage] = useState(1)
+  const [missingSupplierWarning, setMissingSupplierWarning] = useState<string | null>(null)
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [replenishment.length])
 
   if (alertsQuery.isLoading || replenishmentQuery.isLoading) {
     return <LinearProgress />
@@ -81,11 +103,34 @@ export const DashboardPage = () => {
     return <Alert severity="error">Unable to load alerts</Alert>
   }
 
-  const productNameLookup = productNameLookupQuery.data ?? {}
+  const productLookup = productLookupQuery.data ?? {}
   const resolveProductNameById = (productId: string | number, providedName?: string) =>
-    resolveProductName(providedName, productId, productNameLookup[String(productId)])
+    resolveProductName(providedName, productId, productLookup[String(productId)]?.name)
+  const resolveProductSafetyStock = (productId: string | number) =>
+    productLookup[String(productId)]?.minStock
+  const getProductSupplierId = (productId: string | number) =>
+    productLookup[String(productId)]?.supplierId
   const resolveLowStockProductName = (item: LowStock) =>
     resolveProductNameById(item.productId, item.productName)
+  const handleCreatePoFromSuggestion = (item: ReplenishmentSuggestion) => {
+    const supplierId = getProductSupplierId(item.productId)
+    if (!supplierId || `${supplierId}`.trim().length === 0) {
+      setMissingSupplierWarning(
+        `${resolveProductNameById(item.productId)} does not have a supplier assigned yet. Please assign a supplier before creating a purchase order.`,
+      )
+      return
+    }
+    setReplenishmentPrefill({
+      productId: item.productId,
+      suggestedQty: item.suggestedQty,
+    })
+    navigate('/app/purchase-orders')
+  }
+  const totalReplenishmentPages = Math.ceil(replenishment.length / REPLENISHMENT_PAGE_SIZE)
+  const paginatedReplenishment = replenishment.slice(
+    (currentPage - 1) * REPLENISHMENT_PAGE_SIZE,
+    currentPage * REPLENISHMENT_PAGE_SIZE,
+  )
 
   return (
     <Stack spacing={4}>
@@ -177,42 +222,71 @@ export const DashboardPage = () => {
             subtitle="Calculated from the last 30 days of sales."
           />
           <Stack spacing={2}>
-            {replenishment.slice(0, 10).map(item => (
-              <Box
-                key={item.productId}
-                display="flex"
-                justifyContent="space-between"
-                alignItems="center"
-                py={1}
-                sx={{ borderBottom: '1px solid', borderColor: 'divider' }}
-              >
-                <Stack spacing={0.5}>
-                  <Typography variant="subtitle1">
-                    {resolveProductNameById(item.productId)}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Lead time: {formatDays(item.leadTimeDays)} | Safety stock:{' '}
-                    {formatUnits(item.safetyStock)}
-                  </Typography>
-                </Stack>
-                <Chip
-                  color={item.suggestedQty > 0 ? 'warning' : 'success'}
-                  label={
-                    item.suggestedQty > 0
-                      ? `Suggest ordering ${formatUnits(item.suggestedQty)}`
-                      : 'Stock is healthy'
-                  }
-                />
-              </Box>
-            ))}
+            {paginatedReplenishment.map(item => {
+              const safetyStock = resolveProductSafetyStock(item.productId)
+              return (
+                <Box
+                  key={item.productId}
+                  display="flex"
+                  justifyContent="space-between"
+                  alignItems="center"
+                  py={1}
+                  sx={{ borderBottom: '1px solid', borderColor: 'divider' }}
+                >
+                  <Stack spacing={0.5}>
+                    <Typography variant="subtitle1">
+                      {resolveProductNameById(item.productId)}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Safety stock:{' '}
+                      {typeof safetyStock === 'number' ? formatUnits(safetyStock) : 'Not set'}
+                    </Typography>
+                  </Stack>
+                  {item.suggestedQty > 0 ? (
+                    <Button
+                      variant="outlined"
+                      color="warning"
+                      onClick={() => handleCreatePoFromSuggestion(item)}
+                    >
+                      Suggest ordering {formatUnits(item.suggestedQty)}
+                    </Button>
+                  ) : (
+                    <Chip color="success" label="Stock is healthy" />
+                  )}
+                </Box>
+              )
+            })}
             {replenishment.length === 0 && (
               <Typography color="text.secondary">
                 No replenishment suggestions right now.
               </Typography>
             )}
+            {totalReplenishmentPages > 1 && (
+              <Pagination
+                count={totalReplenishmentPages}
+                page={currentPage}
+                onChange={(_, page) => setCurrentPage(page)}
+                color="standard"
+                shape="rounded"
+              />
+            )}
           </Stack>
         </CardContent>
       </Card>
+      <Snackbar
+        open={Boolean(missingSupplierWarning)}
+        autoHideDuration={5000}
+        onClose={() => setMissingSupplierWarning(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert
+          severity="warning"
+          onClose={() => setMissingSupplierWarning(null)}
+          sx={{ width: '100%' }}
+        >
+          {missingSupplierWarning}
+        </Alert>
+      </Snackbar>
     </Stack>
   )
 }
