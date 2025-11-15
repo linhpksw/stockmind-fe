@@ -1,4 +1,4 @@
-import { format, parseISO } from 'date-fns'
+import { formatInTimeZone } from 'date-fns-tz'
 
 export const formatCurrency = (value: number, currency = 'VND') =>
   new Intl.NumberFormat('en-US', {
@@ -7,11 +7,19 @@ export const formatCurrency = (value: number, currency = 'VND') =>
     maximumFractionDigits: 2,
   }).format(value)
 
-const VIETNAM_OFFSET_MINUTES = 7 * 60
+const VIETNAM_TIME_ZONE = 'Asia/Ho_Chi_Minh'
 
-const convertToVietnamTime = (date: Date): Date => {
-  const utcMillis = date.getTime() + date.getTimezoneOffset() * 60000
-  return new Date(utcMillis + VIETNAM_OFFSET_MINUTES * 60000)
+const ensureUtcIsoString = (value: string): string => {
+  const trimmed = value.trim()
+  if (!trimmed) {
+    return trimmed
+  }
+  // If value already has an offset (Z or +/-hh:mm), trust it as-is.
+  if (/[zZ]$/.test(trimmed) || /[+-]\d{2}:\d{2}$/.test(trimmed)) {
+    return trimmed
+  }
+  // Treat bare timestamps from the API as UTC.
+  return `${trimmed}Z`
 }
 
 export const formatDateTime = (value?: string | null, pattern = 'dd MMM yyyy HH:mm') => {
@@ -20,8 +28,8 @@ export const formatDateTime = (value?: string | null, pattern = 'dd MMM yyyy HH:
   }
 
   try {
-    const vietnamDate = convertToVietnamTime(parseISO(value))
-    return format(vietnamDate, pattern)
+    const normalized = ensureUtcIsoString(value)
+    return formatInTimeZone(normalized, VIETNAM_TIME_ZONE, pattern)
   } catch {
     return value
   }
