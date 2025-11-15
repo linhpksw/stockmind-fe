@@ -394,10 +394,15 @@ export const PurchaseOrdersPage = () => {
   ) => {
     scheduleFormUpdate(prev => {
       const orders = prev.orders.slice()
+      const leadTimeDays = value?.leadTimeDays ?? 0
+      const expectedDate =
+        leadTimeDays > 0
+          ? new Date(Date.now() + leadTimeDays * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+          : ''
       orders[orderIndex] = {
         ...orders[orderIndex],
         supplierId: value?.id ?? '',
-        items: [createEmptyOrderItem()],
+        items: [{ ...createEmptyOrderItem(), expectedDate }],
       }
       return { orders }
     })
@@ -440,7 +445,11 @@ export const PurchaseOrdersPage = () => {
   const addItemRow = (orderIndex: number) => {
     scheduleFormUpdate(prev => {
       const orders = prev.orders.slice()
-      const items = [...orders[orderIndex].items, createEmptyOrderItem()]
+      const templateDate = orders[orderIndex].items[0]?.expectedDate ?? ''
+      const items = [
+        ...orders[orderIndex].items,
+        { ...createEmptyOrderItem(), expectedDate: templateDate },
+      ]
       orders[orderIndex] = { ...orders[orderIndex], items }
       return { orders }
     })
@@ -477,6 +486,15 @@ export const PurchaseOrdersPage = () => {
       return { orders }
     })
     setCreateFormError(null)
+  }
+
+  const handleSupplierExpectedDateChange = (orderIndex: number, value: string) => {
+    scheduleFormUpdate(prev => {
+      const orders = prev.orders.slice()
+      const items = orders[orderIndex].items.map(item => ({ ...item, expectedDate: value }))
+      orders[orderIndex] = { ...orders[orderIndex], items }
+      return { orders }
+    })
   }
 
   const handleCreatePo = () => {
@@ -985,6 +1003,11 @@ export const PurchaseOrdersPage = () => {
                   suppliers.find(supplier => supplier.id === order.supplierId) ?? null
                 const productOptions = getProductsForSupplier(order.supplierId)
                 const supplierTotal = getSupplierTotal(order)
+                const supplierExpectedDate = order.items[0]?.expectedDate ?? ''
+                const leadTimeBadge =
+                  supplierRecord && supplierRecord.leadTimeDays
+                    ? `${supplierRecord.leadTimeDays} day${supplierRecord.leadTimeDays === 1 ? '' : 's'} lead time`
+                    : null
                 return (
                   <Box
                     key={order.id}
@@ -1021,6 +1044,30 @@ export const PurchaseOrdersPage = () => {
                             variant="outlined"
                           />
                         )}
+                        {leadTimeBadge && (
+                          <Chip
+                            label={leadTimeBadge}
+                            size="small"
+                            variant="outlined"
+                            sx={{
+                              borderColor: 'warning.light',
+                              color: 'warning.dark',
+                              backgroundColor: theme => alpha(theme.palette.warning.light, 0.1),
+                            }}
+                          />
+                        )}
+                        {supplierRecord?.contact && (
+                          <Chip
+                            label={supplierRecord.contact}
+                            size="small"
+                            variant="outlined"
+                            sx={{
+                              borderColor: 'info.light',
+                              color: 'info.dark',
+                              backgroundColor: theme => alpha(theme.palette.info.light, 0.1),
+                            }}
+                          />
+                        )}
                       </Stack>
                       <Stack direction="row" spacing={1} alignItems="center">
                         <Typography variant="body2" color="text.secondary">
@@ -1044,27 +1091,46 @@ export const PurchaseOrdersPage = () => {
                       </Stack>
                     </Stack>
 
-                    <BaseAutocomplete
-                      options={suppliers}
-                      value={supplierRecord}
-                      onChange={(
-                        event: SyntheticEvent<Element, Event>,
-                        supplier: Supplier | null,
-                      ) => handleSupplierChange(orderIndex, event, supplier)}
-                      getOptionLabel={(option: Supplier) => option.name}
-                      isOptionEqualToValue={(option: Supplier, value: Supplier) =>
-                        option.id === value.id
-                      }
-                      renderInput={(params: AutocompleteRenderInputParams) => (
-                        <TextField
-                          {...params}
-                          label="Supplier"
-                          placeholder="Select supplier"
-                          size="small"
-                        />
-                      )}
-                      loading={isSupplierLoading}
-                    />
+                    <Box
+                      sx={{
+                        display: 'grid',
+                        gap: 2,
+                        gridTemplateColumns: { xs: '1fr', md: '2fr 220px' },
+                        alignItems: 'center',
+                      }}
+                    >
+                      <BaseAutocomplete
+                        options={suppliers}
+                        value={supplierRecord}
+                        onChange={(
+                          event: SyntheticEvent<Element, Event>,
+                          supplier: Supplier | null,
+                        ) => handleSupplierChange(orderIndex, event, supplier)}
+                        getOptionLabel={(option: Supplier) => option.name}
+                        isOptionEqualToValue={(option: Supplier, value: Supplier) =>
+                          option.id === value.id
+                        }
+                        renderInput={(params: AutocompleteRenderInputParams) => (
+                          <TextField
+                            {...params}
+                            label="Supplier"
+                            placeholder="Select supplier"
+                            size="small"
+                          />
+                        )}
+                        loading={isSupplierLoading}
+                      />
+                      <TextField
+                        label="Expected date"
+                        type="date"
+                        size="small"
+                        value={supplierExpectedDate}
+                        onChange={(event: ChangeEvent<HTMLInputElement>) =>
+                          handleSupplierExpectedDateChange(orderIndex, event.target.value)
+                        }
+                        InputLabelProps={{ shrink: true }}
+                      />
+                    </Box>
 
                     <Stack spacing={2}>
                       {order.items.map((item, itemIndex) => {
@@ -1128,7 +1194,7 @@ export const PurchaseOrdersPage = () => {
                                 gap: 2,
                                 gridTemplateColumns: {
                                   xs: '1fr',
-                                  md: '2fr repeat(3, minmax(130px, 1fr))',
+                                  md: '2fr repeat(2, minmax(130px, 1fr))',
                                 },
                               }}
                             >
@@ -1187,21 +1253,6 @@ export const PurchaseOrdersPage = () => {
                                   )
                                 }
                                 inputProps={{ min: 1 }}
-                              />
-                              <TextField
-                                label="Expected date"
-                                type="date"
-                                size="small"
-                                value={item.expectedDate}
-                                onChange={(event: ChangeEvent<HTMLInputElement>) =>
-                                  handleItemFieldChange(
-                                    orderIndex,
-                                    itemIndex,
-                                    'expectedDate',
-                                    event.target.value,
-                                  )
-                                }
-                                InputLabelProps={{ shrink: true }}
                               />
                             </Box>
                           </Box>

@@ -7,13 +7,21 @@ export const formatCurrency = (value: number, currency = 'VND') =>
     maximumFractionDigits: 2,
   }).format(value)
 
+const VIETNAM_OFFSET_MINUTES = 7 * 60
+
+const convertToVietnamTime = (date: Date): Date => {
+  const utcMillis = date.getTime() + date.getTimezoneOffset() * 60000
+  return new Date(utcMillis + VIETNAM_OFFSET_MINUTES * 60000)
+}
+
 export const formatDateTime = (value?: string | null, pattern = 'dd MMM yyyy HH:mm') => {
   if (!value) {
     return '-'
   }
 
   try {
-    return format(parseISO(value), pattern)
+    const vietnamDate = convertToVietnamTime(parseISO(value))
+    return format(vietnamDate, pattern)
   } catch {
     return value
   }
