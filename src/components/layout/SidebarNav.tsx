@@ -20,15 +20,65 @@ import {
   Typography,
 } from '@mui/material'
 import { useMemo } from 'react'
+import type { ReactNode } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
+import { listSuppliers } from '../../api/suppliers'
+import { fetchCategories } from '../../api/categories'
+import { listProducts } from '../../api/products'
+import { listMarginProfiles } from '../../api/margins'
 import { SIDEBAR_WIDTH } from '../../constants/layout'
 
-const NAV_ITEMS = [
+type MasterDataStatusKey = 'suppliers' | 'categories' | 'products' | 'margins'
+
+type MasterDataStatus = Record<MasterDataStatusKey, boolean>
+
+const DEFAULT_STATUS: MasterDataStatus = {
+  suppliers: false,
+  categories: false,
+  products: false,
+  margins: false,
+}
+
+type NavItem = {
+  label: string
+  path: string
+  icon: ReactNode
+  sequence?: string
+  statusKey?: MasterDataStatusKey
+}
+
+const NAV_ITEMS: NavItem[] = [
   { label: 'Dashboard', path: '/app', icon: <Dashboard fontSize="small" /> },
+  {
+    label: 'Suppliers',
+    path: '/app/suppliers',
+    icon: <LocalShipping fontSize="small" />,
+    sequence: 'S1',
+    statusKey: 'suppliers',
+  },
+  {
+    label: 'Categories',
+    path: '/app/categories',
+    icon: <Category fontSize="small" />,
+    sequence: 'S2',
+    statusKey: 'categories',
+  },
+  {
+    label: 'Products',
+    path: '/app/products',
+    icon: <Inventory2 fontSize="small" />,
+    sequence: 'S3',
+    statusKey: 'products',
+  },
+  {
+    label: 'Margins',
+    path: '/app/margins',
+    icon: <AutoAwesomeMotion fontSize="small" />,
+    sequence: 'S4',
+    statusKey: 'margins',
+  },
   { label: 'Inventory', path: '/app/inventory', icon: <Warehouse fontSize="small" /> },
-  { label: 'Products', path: '/app/products', icon: <Inventory2 fontSize="small" /> },
-  { label: 'Suppliers', path: '/app/suppliers', icon: <LocalShipping fontSize="small" /> },
-  { label: 'Categories', path: '/app/categories', icon: <Category fontSize="small" /> },
   {
     label: 'Purchase Orders',
     path: '/app/purchase-orders',
@@ -36,9 +86,41 @@ const NAV_ITEMS = [
   },
   { label: 'Receiving (GRN)', path: '/app/receiving', icon: <ReceiptLong fontSize="small" /> },
   { label: 'Markdowns', path: '/app/markdowns', icon: <Inventory2 fontSize="small" /> },
-  { label: 'Margins', path: '/app/margins', icon: <AutoAwesomeMotion fontSize="small" /> },
   { label: 'Waste', path: '/app/waste', icon: <Recycling fontSize="small" /> },
 ]
+
+const useMasterDataStatus = () => {
+  return useQuery({
+    queryKey: ['master-data-status'],
+    queryFn: async (): Promise<MasterDataStatus> => {
+      const [suppliersResult, categoriesResult, productsResult, marginsResult] =
+        await Promise.allSettled([
+          listSuppliers({ pageNum: 1, pageSize: 1 }),
+          fetchCategories(),
+          listProducts(),
+          listMarginProfiles(),
+        ])
+
+      const status: MasterDataStatus = { ...DEFAULT_STATUS }
+
+      if (suppliersResult.status === 'fulfilled') {
+        status.suppliers = suppliersResult.value.data.length > 0
+      }
+      if (categoriesResult.status === 'fulfilled') {
+        status.categories = categoriesResult.value.length > 0
+      }
+      if (productsResult.status === 'fulfilled') {
+        status.products = productsResult.value.length > 0
+      }
+      if (marginsResult.status === 'fulfilled') {
+        status.margins = marginsResult.value.length > 0
+      }
+
+      return status
+    },
+    staleTime: 5 * 60 * 1000,
+  })
+}
 
 interface SidebarNavProps {
   mobileOpen: boolean
@@ -48,6 +130,7 @@ interface SidebarNavProps {
 export const SidebarNav = ({ mobileOpen, onClose }: SidebarNavProps) => {
   const location = useLocation()
   const navigate = useNavigate()
+  const { data: masterDataStatus } = useMasterDataStatus()
 
   const content = useMemo(
     () => (
@@ -64,6 +147,7 @@ export const SidebarNav = ({ mobileOpen, onClose }: SidebarNavProps) => {
         <List sx={{ flexGrow: 1 }}>
           {NAV_ITEMS.map(item => {
             const active = location.pathname === item.path
+            const isCompleted = item.statusKey ? masterDataStatus?.[item.statusKey] : false
             return (
               <ListItemButton
                 key={item.path}
@@ -76,10 +160,43 @@ export const SidebarNav = ({ mobileOpen, onClose }: SidebarNavProps) => {
                   borderRadius: 2,
                   mx: 2,
                   my: 0.5,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
                 }}
               >
-                <ListItemIcon>{item.icon}</ListItemIcon>
-                <ListItemText primary={item.label} />
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <ListItemIcon sx={{ minWidth: 36 }}>{item.icon}</ListItemIcon>
+                  <ListItemText primary={item.label} />
+                </Box>
+                {item.sequence && (
+                  <Box
+                    sx={{
+                      borderRadius: '50%',
+                      width: 30,
+                      height: 30,
+                      bgcolor: theme =>
+                        isCompleted
+                          ? theme.palette.success.main
+                          : active
+                            ? theme.palette.primary.main
+                            : theme.palette.grey[200],
+                      color: theme =>
+                        isCompleted
+                          ? theme.palette.success.contrastText
+                          : active
+                            ? theme.palette.primary.contrastText
+                            : theme.palette.text.secondary,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: 12,
+                      fontWeight: 700,
+                    }}
+                  >
+                    {item.sequence}
+                  </Box>
+                )}
               </ListItemButton>
             )
           })}
@@ -91,7 +208,7 @@ export const SidebarNav = ({ mobileOpen, onClose }: SidebarNavProps) => {
         </Box>
       </Box>
     ),
-    [location.pathname, navigate, onClose],
+    [location.pathname, masterDataStatus, navigate, onClose],
   )
 
   return (

@@ -7,6 +7,7 @@ export interface CategoryNode {
 }
 
 export interface CategoryImportRow {
+  categoryId?: number | null
   code: string
   name: string
   parentCode?: string | null
