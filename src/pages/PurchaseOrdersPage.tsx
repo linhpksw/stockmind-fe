@@ -319,6 +319,14 @@ export const PurchaseOrdersPage = () => {
     [marginLookup, resolveParentKey],
   )
 
+  const getDefaultExpectedDate = (leadTimeDays?: number) => {
+    const offset = Number.isFinite(leadTimeDays) ? (leadTimeDays ?? 0) : 0
+    const date = new Date()
+    date.setHours(0, 0, 0, 0)
+    date.setDate(date.getDate() + offset)
+    return date.toISOString().slice(0, 10)
+  }
+
   const syncMutation = useMutation({
     mutationFn: () => syncPurchaseOrders(page + 1, rowsPerPage),
     onSuccess: () => {
@@ -395,10 +403,7 @@ export const PurchaseOrdersPage = () => {
     scheduleFormUpdate(prev => {
       const orders = prev.orders.slice()
       const leadTimeDays = value?.leadTimeDays ?? 0
-      const expectedDate =
-        leadTimeDays > 0
-          ? new Date(Date.now() + leadTimeDays * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
-          : ''
+      const expectedDate = getDefaultExpectedDate(leadTimeDays)
       orders[orderIndex] = {
         ...orders[orderIndex],
         supplierId: value?.id ?? '',
@@ -445,7 +450,7 @@ export const PurchaseOrdersPage = () => {
   const addItemRow = (orderIndex: number) => {
     scheduleFormUpdate(prev => {
       const orders = prev.orders.slice()
-      const templateDate = orders[orderIndex].items[0]?.expectedDate ?? ''
+      const templateDate = orders[orderIndex].items[0]?.expectedDate ?? getDefaultExpectedDate()
       const items = [
         ...orders[orderIndex].items,
         { ...createEmptyOrderItem(), expectedDate: templateDate },
