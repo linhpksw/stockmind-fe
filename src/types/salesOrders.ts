@@ -96,6 +96,14 @@ export interface CreateSalesOrderResponse {
   pending?: PendingSalesOrder
 }
 
+export interface PendingSalesOrderStatus {
+  pendingId: number
+  status: string
+  expiresAt: string
+  confirmedAt?: string | null
+  isConfirmed: boolean
+}
+
 export type SalesOrderContextResponse = ApiResponse<SalesOrderContext>
 export type SellableLotResponse = ApiResponse<SellableLot[]>
 export type CreateSalesOrderApiResponse = ApiResponse<CreateSalesOrderResponse>

@@ -3,6 +3,7 @@ import { unwrap } from './helpers'
 import type {
   CreateSalesOrderRequest,
   CreateSalesOrderResponse,
+  PendingSalesOrderStatus,
   SalesOrderContext,
   SellableLot,
   SellableLotQuery,
@@ -52,4 +53,17 @@ export const createSalesOrder = async (
     payload,
   )
   return unwrap(data)
+}
+
+export const getPendingSalesOrderStatus = async (
+  pendingId: number,
+): Promise<PendingSalesOrderStatus> => {
+  const { data } = await apiClient.get<ApiResponse<PendingSalesOrderStatus>>(
+    `/api/sales-orders/pending/${pendingId}`,
+  )
+  return unwrap(data)
+}
+
+export const cancelPendingSalesOrder = async (pendingId: number): Promise<void> => {
+  await apiClient.delete(`/api/sales-orders/pending/${pendingId}`)
 }
