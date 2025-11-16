@@ -10,6 +10,7 @@ import {
   Chip,
   IconButton,
   Paper,
+  Skeleton,
   Stack,
   Table,
   TableBody,
@@ -422,13 +423,15 @@ export const InventoryPage = () => {
           </TableHead>
           <TableBody>
             {summaryQuery.isLoading ? (
-              <TableRow>
-                <TableCell colSpan={5}>
-                  <Typography textAlign="center" py={3}>
-                    Loading inventory…
-                  </Typography>
-                </TableCell>
-              </TableRow>
+              Array.from({ length: 4 }).map((_, idx) => (
+                <TableRow key={`inventory-skel-${idx}`}>
+                  {Array.from({ length: 5 }).map((__, col) => (
+                    <TableCell key={col}>
+                      <Skeleton variant="rounded" height={24} />
+                    </TableCell>
+                  ))}
+                </TableRow>
+              ))
             ) : summaries.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={5}>
