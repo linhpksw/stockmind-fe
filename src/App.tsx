@@ -15,7 +15,6 @@ const PurchaseOrdersPage = lazy(() => import('./pages/PurchaseOrdersPage'))
 const ReceivingPage = lazy(() => import('./pages/ReceivingPage'))
 const MarkdownsPage = lazy(() => import('./pages/MarkdownsPage'))
 const ReplenishmentPage = lazy(() => import('./pages/ReplenishmentPage'))
-const WastePage = lazy(() => import('./pages/WastePage'))
 const MarginsPage = lazy(() => import('./pages/MarginsPage'))
 const NotFoundPage = lazy(() => import('./pages/NotFoundPage'))
 
@@ -56,7 +55,6 @@ const App = () => (
           <Route path="markdowns" element={<MarkdownsPage />} />
           <Route path="margins" element={<MarginsPage />} />
           <Route path="replenishment" element={<ReplenishmentPage />} />
-          <Route path="waste" element={<WastePage />} />
         </Route>
         <Route path="*" element={<NotFoundPage />} />
       </Routes>

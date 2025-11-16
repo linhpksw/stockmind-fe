@@ -5,7 +5,6 @@ import {
   Inventory2,
   LocalShipping,
   ReceiptLong,
-  Recycling,
   ShoppingCart,
   Warehouse,
 } from '@mui/icons-material'
@@ -97,7 +96,6 @@ const NAV_ITEMS: NavItem[] = [
     statusKey: 'inventory',
   },
   { label: 'Markdowns', path: '/app/markdowns', icon: <Inventory2 fontSize="small" /> },
-  { label: 'Waste', path: '/app/waste', icon: <Recycling fontSize="small" /> },
 ]
 
 interface SidebarNavProps {
@@ -123,13 +121,44 @@ export const SidebarNav = ({ mobileOpen, onClose }: SidebarNavProps) => {
   const content = useMemo(
     () => (
       <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-        <Box px={3} py={3}>
-          <Typography variant="h5" fontWeight={700}>
-            StockMind
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            Inventory control cockpit
-          </Typography>
+        <Box
+          px={3}
+          py={3}
+          sx={{
+            borderBottom: '1px solid',
+            borderColor: 'divider',
+            background: theme =>
+              `linear-gradient(135deg, ${theme.palette.primary.main}0f, ${theme.palette.primary.light}1f)`,
+            borderTopLeftRadius: { xs: 0, md: 0 },
+            borderTopRightRadius: { xs: 0, md: 0 },
+          }}
+        >
+          <Stack direction="row" spacing={1.5} alignItems="center">
+            <Box
+              sx={{
+                width: 42,
+                height: 42,
+                borderRadius: 2,
+                display: 'grid',
+                placeItems: 'center',
+                fontWeight: 800,
+                color: 'primary.contrastText',
+                background: theme =>
+                  `linear-gradient(135deg, ${theme.palette.primary.main}, ${theme.palette.secondary.main})`,
+                boxShadow: theme => `0 8px 18px ${theme.palette.primary.main}33`,
+              }}
+            >
+              SM
+            </Box>
+            <Box>
+              <Typography variant="h5" fontWeight={800} letterSpacing={0.2}>
+                StockMind
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                Smarter retail operations
+              </Typography>
+            </Box>
+          </Stack>
         </Box>
         <Divider />
         <List sx={{ flexGrow: 1 }}>
@@ -194,7 +223,13 @@ export const SidebarNav = ({ mobileOpen, onClose }: SidebarNavProps) => {
                 </Typography>
               </Box>
             </Stack>
-            <Button variant="outlined" size="small" onClick={handleLogout}>
+            <Button
+              variant="contained"
+              color="error"
+              size="small"
+              onClick={handleLogout}
+              sx={{ color: 'error.contrastText' }}
+            >
               Logout
             </Button>
             <Typography variant="caption" color="text.secondary">
@@ -230,6 +265,7 @@ export const SidebarNav = ({ mobileOpen, onClose }: SidebarNavProps) => {
             width: SIDEBAR_WIDTH,
             boxSizing: 'border-box',
             borderRight: 0,
+            borderRadius: 0,
             backgroundColor: 'background.paper',
           },
         }}

@@ -22,7 +22,7 @@ export const AppLayout = () => {
         }}
       >
         <TopBar onOpenSidebar={() => setMobileOpen(true)} />
-        <Container maxWidth={false} sx={{ flexGrow: 1, py: 4 }}>
+        <Container maxWidth={false} sx={{ flexGrow: 1, py: 2 }}>
           <Outlet />
         </Container>
       </Box>
