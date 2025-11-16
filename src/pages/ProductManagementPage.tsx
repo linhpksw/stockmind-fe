@@ -808,7 +808,8 @@ export const ProductManagementPage = () => {
       if (payloadRows.length === 0) {
         setFeedback({
           type: 'error',
-          message: 'No valid rows detected. Ensure sku_code, name, uom, and price columns exist.',
+          message:
+            'No valid rows detected. Ensure sku_code, name, uom, and price columns exist (is_perishable, shelf_life_days, min_stock optional).',
         })
         return
       }

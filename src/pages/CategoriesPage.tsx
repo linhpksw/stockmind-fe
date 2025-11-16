@@ -266,33 +266,23 @@ export const CategoriesPage = () => {
         title="Category hierarchy"
         subtitle="Manage parent/child groupings for your assortment in one place."
         action={
-          <Stack spacing={1} alignItems={{ xs: 'flex-start', sm: 'flex-end' }} maxWidth={380}>
-            <Stack spacing={0.25} textAlign={{ xs: 'left', sm: 'right' }}>
-              <Typography variant="subtitle2" color="text.secondary">
-                Bulk actions
-              </Typography>
-              <Typography variant="caption" color="text.secondary">
-                Import from Excel using columns: <strong>category_id</strong>, <strong>code</strong>
-                , <strong>name</strong>, plus optional <strong>parent_category_id</strong> or{' '}
-                <strong>parent_code</strong>.
-              </Typography>
-            </Stack>
-            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} width="100%">
+          <Stack spacing={1} alignItems={{ xs: 'flex-start', sm: 'flex-end' }}>
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems="flex-end">
               <Button
                 variant="outlined"
                 startIcon={<DownloadIcon />}
                 onClick={handleExport}
                 disabled={sortedTree.length === 0}
               >
-                Export current tree
+                Export (.xlsx)
               </Button>
               <Button
-                variant="contained"
+                variant="outlined"
                 startIcon={<UploadFileIcon />}
                 onClick={() => fileInputRef.current?.click()}
                 disabled={importMutation.isPending}
               >
-                {importMutation.isPending ? 'Importing…' : 'Import categories'}
+                {importMutation.isPending ? 'Importing…' : 'Import (.xlsx)'}
               </Button>
             </Stack>
           </Stack>
