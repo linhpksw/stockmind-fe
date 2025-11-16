@@ -4,6 +4,7 @@ import {
   Dashboard,
   Inventory2,
   LocalShipping,
+  PointOfSale,
   ReceiptLong,
   ShoppingCart,
   Warehouse,
@@ -95,6 +96,7 @@ const NAV_ITEMS: NavItem[] = [
     sequence: 'S7',
     statusKey: 'inventory',
   },
+  { label: 'Sales Orders', path: '/app/sales-orders', icon: <PointOfSale fontSize="small" /> },
   { label: 'Markdowns', path: '/app/markdowns', icon: <Inventory2 fontSize="small" /> },
 ]
 

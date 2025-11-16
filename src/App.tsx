@@ -17,6 +17,7 @@ const MarkdownsPage = lazy(() => import('./pages/MarkdownsPage'))
 const ReplenishmentPage = lazy(() => import('./pages/ReplenishmentPage'))
 const MarginsPage = lazy(() => import('./pages/MarginsPage'))
 const NotFoundPage = lazy(() => import('./pages/NotFoundPage'))
+const SalesOrderPage = lazy(() => import('./pages/SalesOrderPage'))
 
 const Loader = () => (
   <Box display="flex" justifyContent="center" py={4}>
@@ -55,6 +56,7 @@ const App = () => (
           <Route path="markdowns" element={<MarkdownsPage />} />
           <Route path="margins" element={<MarginsPage />} />
           <Route path="replenishment" element={<ReplenishmentPage />} />
+          <Route path="sales-orders" element={<SalesOrderPage />} />
         </Route>
         <Route path="*" element={<NotFoundPage />} />
       </Routes>
