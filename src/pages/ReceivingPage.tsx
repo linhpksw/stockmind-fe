@@ -20,6 +20,7 @@ import {
   TableRow,
   TextField,
   Typography,
+  Skeleton,
 } from '@mui/material'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -510,13 +511,15 @@ export const ReceivingPage = () => {
           </TableHead>
           <TableBody>
             {summaryQuery.isLoading ? (
-              <TableRow>
-                <TableCell colSpan={7}>
-                  <Typography textAlign="center" py={3}>
-                    Loading receipts…
-                  </Typography>
-                </TableCell>
-              </TableRow>
+              Array.from({ length: 4 }).map((_, idx) => (
+                <TableRow key={`receiving-skel-${idx}`}>
+                  {Array.from({ length: 7 }).map((__, col) => (
+                    <TableCell key={col}>
+                      <Skeleton variant="rounded" height={24} />
+                    </TableCell>
+                  ))}
+                </TableRow>
+              ))
             ) : summaries.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={7}>

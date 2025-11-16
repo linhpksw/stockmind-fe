@@ -934,23 +934,36 @@ export const ProductManagementPage = () => {
         </Alert>
       )}
 
-      <Paper sx={{ p: 3 }}>
-        <Stack spacing={2}>
-          <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} justifyContent="space-between">
-            <Stack direction="row" spacing={1} alignItems="center">
-              <FilterAltIcon fontSize="small" color="primary" />
-              <Typography variant="h6">Filter catalog</Typography>
+      <Paper sx={{ p: 2 }}>
+        <Stack spacing={1.5}>
+          <Stack
+            direction={{ xs: 'column', md: 'row' }}
+            spacing={1}
+            alignItems={{ xs: 'flex-start', md: 'center' }}
+            justifyContent="space-between"
+          >
+            <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap">
+              <Stack direction="row" spacing={1} alignItems="center">
+                <FilterAltIcon fontSize="small" color="primary" />
+                <Typography variant="subtitle1" fontWeight={700}>
+                  Filter catalog
+                </Typography>
+              </Stack>
+              <Chip
+                color="primary"
+                label={`${filteredProducts.length} product${filteredProducts.length === 1 ? '' : 's'}`}
+              />
             </Stack>
             {(searchFilter ||
               parentCategoryFilter.length > 0 ||
               childCategoryFilter.length > 0 ||
               supplierFilter.length > 0) && (
-              <Button onClick={clearFilters} color="inherit">
+              <Button size="small" onClick={clearFilters} color="inherit">
                 Clear filters
               </Button>
             )}
           </Stack>
-          <Grid container spacing={2}>
+          <Grid container spacing={1.5}>
             <Grid item xs={12} md={3}>
               <TextField
                 label="Search by name or SKU"
@@ -960,6 +973,7 @@ export const ProductManagementPage = () => {
                 }
                 placeholder="e.g. Yogurt, SKU-001"
                 fullWidth
+                size="small"
               />
             </Grid>
             <Grid item xs={12} md={3}>
@@ -978,6 +992,7 @@ export const ProductManagementPage = () => {
                     {...params}
                     label="Category level 1"
                     placeholder="All parent categories"
+                    size="small"
                   />
                 )}
               />
@@ -998,6 +1013,7 @@ export const ProductManagementPage = () => {
                     {...params}
                     label="Category level 2"
                     placeholder="All child categories"
+                    size="small"
                   />
                 )}
               />
@@ -1012,17 +1028,18 @@ export const ProductManagementPage = () => {
                 getOptionLabel={(option: Supplier) => option.name}
                 isOptionEqualToValue={(option: Supplier, value: Supplier) => option.id === value.id}
                 renderInput={params => (
-                  <TextField {...params} label="Supplier" placeholder="All suppliers" />
+                  <TextField
+                    {...params}
+                    label="Supplier"
+                    placeholder="All suppliers"
+                    size="small"
+                  />
                 )}
                 loading={suppliersQuery.isLoading}
               />
             </Grid>
           </Grid>
           <Stack direction="row" spacing={1} flexWrap="wrap">
-            <Chip
-              color="primary"
-              label={`${filteredProducts.length} product${filteredProducts.length === 1 ? '' : 's'}`}
-            />
             {searchFilter && <Chip label={`Search · "${searchFilter}"`} variant="outlined" />}
             {parentCategoryFilter.map(option => (
               <Chip

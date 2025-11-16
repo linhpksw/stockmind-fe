@@ -1,14 +1,5 @@
-import {
-  Alert,
-  Box,
-  Button,
-  Container,
-  Divider,
-  Paper,
-  Stack,
-  TextField,
-  Typography,
-} from '@mui/material'
+import { Alert, Box, Button, Container, Paper, Stack, TextField, Typography } from '@mui/material'
+import { AxiosError } from 'axios'
 import { useMutation } from '@tanstack/react-query'
 import type { ChangeEvent, FormEvent } from 'react'
 import { useState } from 'react'
@@ -76,158 +67,149 @@ export const LoginPage = () => {
     setCredentials({ username, password: DEMO_PASSWORD })
   }
 
+  const getFriendlyError = (err: unknown): string => {
+    if (err instanceof AxiosError && err.response?.status === 401) {
+      return 'Invalid username or password.'
+    }
+    if (err instanceof Error) {
+      return err.message
+    }
+    return 'Login failed'
+  }
+
   return (
     <Box
       sx={{
         minHeight: '100vh',
-        background: theme =>
-          `linear-gradient(135deg, ${theme.palette.primary.dark}, ${theme.palette.grey[900]})`,
         display: 'flex',
         alignItems: 'center',
+        justifyContent: 'center',
         py: { xs: 6, md: 8 },
         px: 2,
+        backgroundImage: theme =>
+          `radial-gradient(circle at 15% 20%, ${theme.palette.primary.light}11, transparent 25%),
+           radial-gradient(circle at 80% 0%, ${theme.palette.secondary.light}14, transparent 22%),
+           linear-gradient(120deg, ${theme.palette.background.default}, ${theme.palette.grey[50]})`,
       }}
     >
-      <Container component="main" maxWidth="lg">
+      <Container component="main" maxWidth="md">
         <Paper
-          elevation={16}
+          elevation={0}
           sx={{
-            display: 'flex',
-            flexDirection: { xs: 'column', md: 'row' },
-            borderRadius: 6,
-            overflow: 'hidden',
+            p: { xs: 3, sm: 4 },
+            border: theme => `2px dashed ${theme.palette.divider}`,
+            borderRadius: 3,
+            bgcolor: 'background.paper',
           }}
         >
-          <Box
-            sx={{
-              flex: 1,
-              background:
-                'radial-gradient(circle at 20% 20%, rgba(255,255,255,0.18), transparent 45%), #050b1e',
-              color: 'common.white',
-              p: { xs: 4, sm: 6 },
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 4,
-              justifyContent: 'center',
-            }}
-          >
-            <Box>
-              <Typography variant="overline" letterSpacing={2} color="primary.light">
+          <Stack spacing={3}>
+            <Box textAlign="center">
+              <Typography variant="overline" letterSpacing={2} color="primary.main">
                 StockMind
               </Typography>
-              <Typography variant="h4" fontWeight={800} mt={1}>
-                Inventory intelligence for modern retail teams
+              <Typography variant="h5" fontWeight={800} mt={0.5}>
+                Welcome back
               </Typography>
-              <Typography variant="body1" color="grey.200" mt={1.5}>
-                Sign in to orchestrate buyers, store staff, and cashiers from a single source of
-                truth. Rapid insights, proactive alerts, and confident decision making.
+              <Typography variant="body2" color="text.secondary">
+                Sign in to continue
               </Typography>
             </Box>
-            <Box>
-              <Typography
-                variant="subtitle2"
-                textTransform="uppercase"
-                letterSpacing={1}
-                color="grey.300"
+
+            <Stack
+              direction={{ xs: 'column', md: 'row' }}
+              spacing={2}
+              alignItems="stretch"
+              justifyContent="space-between"
+            >
+              <Paper
+                variant="outlined"
+                sx={{
+                  flex: 1,
+                  p: { xs: 2.5, sm: 3 },
+                  borderStyle: 'dashed',
+                }}
               >
-                Quick test accounts
-              </Typography>
-              <Stack spacing={1.5} mt={2}>
-                {demoAccounts.map(account => (
-                  <Box
-                    key={account.username}
-                    sx={{
-                      borderRadius: 2,
-                      border: '1px solid rgba(255,255,255,0.18)',
-                      p: 2,
-                      display: 'flex',
-                      alignItems: 'flex-start',
-                      gap: 2,
-                      justifyContent: 'space-between',
-                      flexWrap: 'wrap',
-                      backgroundColor: 'rgba(255,255,255,0.03)',
-                    }}
+                <Stack spacing={2} height="100%" component="form" onSubmit={handleSubmit}>
+                  <TextField
+                    label="Username"
+                    value={credentials.username}
+                    onChange={handleFieldChange('username')}
+                    required
+                    autoFocus
+                    size="small"
+                  />
+                  <TextField
+                    label="Password"
+                    type="password"
+                    value={credentials.password}
+                    onChange={handleFieldChange('password')}
+                    required
+                    size="small"
+                  />
+                  {mutation.isError && (
+                    <Alert severity="error">{getFriendlyError(mutation.error)}</Alert>
+                  )}
+                  <Button
+                    type="submit"
+                    variant="contained"
+                    size="large"
+                    disabled={mutation.isPending}
+                    fullWidth
                   >
-                    <Box>
-                      <Typography variant="subtitle1" fontWeight={700}>
-                        {account.role}
-                      </Typography>
-                      <Typography variant="body2" color="grey.100">
-                        Username:{' '}
-                        <Box component="span" fontWeight={600}>
-                          {account.username}
-                        </Box>{' '}
-                        · Password:{' '}
-                        <Box component="span" fontWeight={600}>
-                          {DEMO_PASSWORD}
-                        </Box>
-                      </Typography>
-                      <Typography variant="caption" color="grey.300">
-                        {account.summary}
-                      </Typography>
-                    </Box>
-                    <Button
-                      variant="outlined"
-                      color="inherit"
-                      size="small"
-                      onClick={() => handleUseDemoAccount(account.username)}
-                    >
-                      Autofill
-                    </Button>
-                  </Box>
-                ))}
-              </Stack>
-            </Box>
-          </Box>
-          <Box
-            sx={{
-              flex: 1,
-              p: { xs: 4, sm: 6 },
-              bgcolor: 'background.paper',
-              display: 'flex',
-              alignItems: 'center',
-            }}
-          >
-            <Stack spacing={3} width="100%" component="form" onSubmit={handleSubmit}>
-              <Box>
-                <Typography variant="h5" fontWeight={700}>
-                  Welcome back
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  Sign in with your StockMind credentials to continue
-                </Typography>
-              </Box>
-              <Divider />
-              <TextField
-                label="Username"
-                value={credentials.username}
-                onChange={handleFieldChange('username')}
-                required
-                autoFocus
-              />
-              <TextField
-                label="Password"
-                type="password"
-                value={credentials.password}
-                onChange={handleFieldChange('password')}
-                required
-              />
-              {mutation.isError && (
-                <Alert severity="error">
-                  {mutation.error instanceof Error ? mutation.error.message : 'Login failed'}
-                </Alert>
-              )}
-              <Button
-                type="submit"
-                variant="contained"
-                size="large"
-                disabled={mutation.isPending}
-                fullWidth
+                    {mutation.isPending ? 'Signing in…' : 'Sign in'}
+                  </Button>
+                </Stack>
+              </Paper>
+
+              <Paper
+                variant="outlined"
+                sx={{
+                  flex: 1,
+                  p: { xs: 2.5, sm: 3 },
+                  borderStyle: 'dashed',
+                  bgcolor: 'background.default',
+                }}
               >
-                {mutation.isPending ? 'Signing in...' : 'Sign in'}
-              </Button>
+                <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                  Quick test accounts (tap to autofill)
+                </Typography>
+                <Stack spacing={1.25}>
+                  {demoAccounts.slice(0, 4).map(account => (
+                    <Stack
+                      key={account.username}
+                      direction="row"
+                      spacing={1}
+                      alignItems="center"
+                      justifyContent="space-between"
+                      sx={{
+                        border: theme => `1px dashed ${theme.palette.divider}`,
+                        borderRadius: 2,
+                        p: 1.25,
+                        backgroundColor: 'background.paper',
+                      }}
+                    >
+                      <Box>
+                        <Typography fontWeight={700}>{account.role}</Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {account.summary}
+                        </Typography>
+                        <Typography variant="body2" mt={0.5}>
+                          {account.username} / {DEMO_PASSWORD}
+                        </Typography>
+                      </Box>
+                      <Button
+                        variant="outlined"
+                        size="small"
+                        onClick={() => handleUseDemoAccount(account.username)}
+                      >
+                        Autofill
+                      </Button>
+                    </Stack>
+                  ))}
+                </Stack>
+              </Paper>
             </Stack>
-          </Box>
+          </Stack>
         </Paper>
       </Container>
     </Box>
