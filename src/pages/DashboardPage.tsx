@@ -30,6 +30,7 @@ import { setReplenishmentPrefill } from '../utils/replenishmentPrefill'
 const EMPTY_ALERTS: AlertsAggregate = { lowStock: [], expirySoon: [], slowMovers: [] }
 const EMPTY_REPLENISHMENT: ReplenishmentSuggestion[] = []
 const REPLENISHMENT_PAGE_SIZE = 5
+const PO_CREATE_DRAFT_STORAGE_KEY = 'po-create-draft'
 
 const formatProductLabel = (productId: string | number) => `Product ID ${productId}`
 const formatLotLabel = (lotId: string, lotCode?: string) =>
@@ -48,6 +49,42 @@ const formatUnits = (amount: number) => {
   return `${quantity} ${suffix}`
 }
 const formatDays = (days: number) => `${days} day${days === 1 ? '' : 's'}`
+
+const pruneDraftOrdersWithoutSupplier = () => {
+  if (typeof window === 'undefined' || typeof window.localStorage === 'undefined') {
+    return
+  }
+  try {
+    const raw = window.localStorage.getItem(PO_CREATE_DRAFT_STORAGE_KEY)
+    if (!raw) {
+      return
+    }
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.orders)) {
+      return
+    }
+    const cleanedOrders = parsed.orders.filter((order: { supplierId?: string | null }) => {
+      if (!order || typeof order !== 'object') {
+        return false
+      }
+      const id = order.supplierId
+      return typeof id === 'string' && id.trim().length > 0
+    })
+    if (cleanedOrders.length === parsed.orders.length) {
+      return
+    }
+    if (cleanedOrders.length === 0) {
+      window.localStorage.removeItem(PO_CREATE_DRAFT_STORAGE_KEY)
+      return
+    }
+    window.localStorage.setItem(
+      PO_CREATE_DRAFT_STORAGE_KEY,
+      JSON.stringify({ ...parsed, orders: cleanedOrders }),
+    )
+  } catch {
+    // ignore malformed drafts
+  }
+}
 
 export const DashboardPage = () => {
   const navigate = useNavigate()
@@ -113,6 +150,7 @@ export const DashboardPage = () => {
   const resolveLowStockProductName = (item: LowStock) =>
     resolveProductNameById(item.productId, item.productName)
   const handleCreatePoFromSuggestion = (item: ReplenishmentSuggestion) => {
+    pruneDraftOrdersWithoutSupplier()
     const supplierId = getProductSupplierId(item.productId)
     if (!supplierId || `${supplierId}`.trim().length === 0) {
       setMissingSupplierWarning(
@@ -123,6 +161,7 @@ export const DashboardPage = () => {
     setReplenishmentPrefill({
       productId: item.productId,
       suggestedQty: item.suggestedQty,
+      clearDraftPlaceholders: true,
     })
     navigate('/app/purchase-orders')
   }

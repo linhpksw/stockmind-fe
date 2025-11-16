@@ -125,6 +125,7 @@ const createInitialOrderState = (): PurchaseOrderFormState => ({
 type ReplenishmentPrefill = {
   productId: string
   suggestedQty: number
+  clearDraftPlaceholders?: boolean
 }
 
 const PO_CREATE_DRAFT_STORAGE_KEY = 'po-create-draft'
@@ -406,13 +407,20 @@ export const PurchaseOrdersPage = () => {
         : 0
 
     scheduleFormUpdate(prev => {
-      const orders =
+      let orders =
         prev.orders.length > 0
           ? prev.orders.map(order => ({
               ...order,
               items: order.items.map(item => ({ ...item })),
             }))
           : []
+
+      if (pendingReplenishmentPrefill?.clearDraftPlaceholders) {
+        orders = orders.filter(order => {
+          const supplierId = order.supplierId?.trim() ?? ''
+          return supplierId.length > 0
+        })
+      }
 
       let targetIndex =
         supplierId && supplierId.length > 0
@@ -524,6 +532,7 @@ export const PurchaseOrdersPage = () => {
     setPendingReplenishmentPrefill({
       productId: String(stored.productId),
       suggestedQty: stored.suggestedQty,
+      clearDraftPlaceholders: stored.clearDraftPlaceholders,
     })
     if (!createDialogOpen) {
       openCreateDialog()
