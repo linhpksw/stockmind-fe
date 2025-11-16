@@ -8,6 +8,7 @@ export interface MarkdownRecommendation {
   categoryId?: number | null
   categoryName?: string | null
   unitCost: number
+  listPrice: number
   qtyReceived: number
   lotSaleDecisionId?: number | null
   lotSaleDecisionApplied?: boolean | null

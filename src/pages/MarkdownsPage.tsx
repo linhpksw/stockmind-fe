@@ -1,6 +1,7 @@
 import AddIcon from '@mui/icons-material/Add'
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline'
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined'
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined'
 import Autocomplete from '@mui/material/Autocomplete'
 import {
   Alert,
@@ -143,6 +144,11 @@ const percentToFraction = (value: number, allowNegative = false): number =>
 
 const resolveErrorMessage = (error: unknown, fallback: string): string =>
   error instanceof Error ? error.message : fallback
+
+const listPriceTooltip =
+  'List price is the base selling price before markdowns. Estimate it by dividing the unit cost by (1 − target margin %).'
+const floorPriceTooltip =
+  'Floor price is the minimum guardrail derived from cost: floor price = unit cost ÷ (1 − floor % of cost).'
 
 export const MarkdownsPage = () => {
   const [activeTab, setActiveTab] = useState(0)
@@ -506,6 +512,10 @@ export const MarkdownsPage = () => {
   )
   const profitFormatter = useMemo(
     () => new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }),
+    [],
+  )
+  const currencyFormatter = useMemo(
+    () => new Intl.NumberFormat(undefined, { style: 'currency', currency: 'VND' }),
     [],
   )
 
@@ -920,11 +930,43 @@ export const MarkdownsPage = () => {
               <Table size="small">
                 <TableHead>
                   <TableRow>
-                    <TableCell>Product</TableCell>
+                    <TableCell sx={{ width: '25%' }}>Product</TableCell>
+                    <TableCell align="right">Unit cost</TableCell>
+                    <TableCell align="right">
+                      <Stack
+                        direction="row"
+                        spacing={0.5}
+                        alignItems="center"
+                        justifyContent="flex-end"
+                      >
+                        <Box component="span">List price</Box>
+                        <Tooltip title={listPriceTooltip} arrow placement="top">
+                          <InfoOutlinedIcon
+                            fontSize="small"
+                            sx={{ color: 'text.secondary', cursor: 'help' }}
+                          />
+                        </Tooltip>
+                      </Stack>
+                    </TableCell>
                     <TableCell>Lot received at</TableCell>
                     <TableCell>Days to expiry</TableCell>
                     <TableCell>Suggested discount</TableCell>
-                    <TableCell>Floor % of import cost</TableCell>
+                    <TableCell align="right">
+                      <Stack
+                        direction="row"
+                        spacing={0.5}
+                        alignItems="center"
+                        justifyContent="flex-end"
+                      >
+                        <Box component="span">Floor % of import cost</Box>
+                        <Tooltip title={floorPriceTooltip} placement="top" arrow>
+                          <InfoOutlinedIcon
+                            fontSize="small"
+                            sx={{ color: 'text.secondary', cursor: 'help' }}
+                          />
+                        </Tooltip>
+                      </Stack>
+                    </TableCell>
                     <TableCell />
                   </TableRow>
                 </TableHead>
@@ -962,6 +1004,7 @@ export const MarkdownsPage = () => {
                     // console.log("target price and floor price", targetPrice.toFixed(2), floorPrice.toFixed)
 
                     const discountPrice = targetPrice * (1 - discount)
+                    // const discountPrice = targetPrice * discount
                     const quantity = Number(item.qtyReceived ?? 0) || 0
                     const profitDeltaPerUnit = discountPrice - floorPrice
 
@@ -994,7 +1037,7 @@ export const MarkdownsPage = () => {
                       quantity > 0 ? ` (Qty ${profitFormatter.format(quantity)})` : ''
                     const marginText =
                       actualMarginRatio !== null
-                        ? `Actual margin: ${(actualMarginRatio * 100).toFixed(1)}%`
+                        ? `Actual margin: ${discountPrice.toFixed(2)} (${(actualMarginRatio * 100).toFixed(1)}%)`
                         : 'Margin unavailable'
                     const isDecisionApplied = Boolean(
                       item.lotSaleDecisionId && item.lotSaleDecisionApplied,
@@ -1004,7 +1047,13 @@ export const MarkdownsPage = () => {
 
                     return (
                       <TableRow key={`${item.productId}-${item.lotId}`}>
-                        <TableCell>{describeProduct(item)}</TableCell>
+                        <TableCell sx={{ width: '25%' }}>{describeProduct(item)}</TableCell>
+                        <TableCell align="right">
+                          {currencyFormatter.format(item.unitCost ?? 0)}
+                        </TableCell>
+                        <TableCell align="right">
+                          {currencyFormatter.format(item.listPrice ?? 0)}
+                        </TableCell>
                         <TableCell>
                           <Typography>
                             {receivedAtLabel ? `${receivedAtLabel}` : `Lot ${item.lotId}`}
@@ -1039,7 +1088,13 @@ export const MarkdownsPage = () => {
                             )}
                           </Typography>
                         </TableCell>
-                        <TableCell>{percentFormatter.format(item.floorPctOfCost)}</TableCell>
+                        <TableCell align="right">
+                          {Number.isFinite(floorPrice) && floorPrice > 0
+                            ? `${currencyFormatter.format(floorPrice)} (${percentFormatter.format(
+                                item.floorPctOfCost,
+                              )})`
+                            : percentFormatter.format(item.floorPctOfCost)}
+                        </TableCell>
                         <TableCell align="right">
                           {isDecisionApplied ? (
                             <Button
@@ -1067,7 +1122,7 @@ export const MarkdownsPage = () => {
                   })}
                   {!recommendationsQuery.isLoading && filteredRecommendations.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={6}>
+                      <TableCell colSpan={8}>
                         <Typography color="text.secondary">
                           {hasCategoryFilter
                             ? 'No markdowns match this category.'
