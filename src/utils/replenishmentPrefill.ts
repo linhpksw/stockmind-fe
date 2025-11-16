@@ -3,6 +3,7 @@ const REPLENISHMENT_PREFILL_STORAGE_KEY = 'po-replenishment-prefill'
 export type ReplenishmentPrefillPayload = {
   productId: string | number
   suggestedQty: number
+  clearDraftPlaceholders?: boolean
 }
 
 const isBrowser = () =>
@@ -18,6 +19,7 @@ export const setReplenishmentPrefill = (payload: ReplenishmentPrefillPayload) =>
       JSON.stringify({
         productId: payload.productId,
         suggestedQty: payload.suggestedQty,
+        clearDraftPlaceholders: Boolean(payload.clearDraftPlaceholders),
       }),
     )
   } catch {
@@ -43,7 +45,11 @@ export const consumeReplenishmentPrefill = (): ReplenishmentPrefillPayload | nul
     ) {
       return null
     }
-    return parsed
+    return {
+      productId: parsed.productId,
+      suggestedQty: parsed.suggestedQty,
+      clearDraftPlaceholders: Boolean(parsed.clearDraftPlaceholders),
+    }
   } catch {
     return null
   }
