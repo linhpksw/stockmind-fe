@@ -63,3 +63,7 @@ export const getPendingSalesOrderStatus = async (
   )
   return unwrap(data)
 }
+
+export const cancelPendingSalesOrder = async (pendingId: number): Promise<void> => {
+  await apiClient.delete(`/api/sales-orders/pending/${pendingId}`)
+}

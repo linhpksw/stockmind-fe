@@ -38,6 +38,7 @@ import { createCustomer, lookupCustomerByPhone } from '../api/customers'
 import {
   createSalesOrder,
   fetchSalesOrderContext,
+  cancelPendingSalesOrder,
   getPendingSalesOrderStatus,
   searchSellableLots,
 } from '../api/salesOrders'
@@ -259,6 +260,22 @@ export const SalesOrderPage = () => {
     },
     onError: () => {
       pushManualAlert('Failed to finalize the sales order. Please try again.', 'error')
+    },
+  })
+
+  const cancelPendingMutation = useMutation({
+    mutationFn: (pendingId: number) => cancelPendingSalesOrder(pendingId),
+    onSuccess: async () => {
+      pushManualAlert('Pending confirmation cancelled. You can update the loyalty card.', 'info')
+      setPendingOrder(null)
+      await queryClient.invalidateQueries({ queryKey: ['sales-order-context'] })
+    },
+    onError: error => {
+      const message = extractApiErrorMessage(
+        error,
+        'Failed to cancel the pending confirmation. Please try again.',
+      )
+      pushManualAlert(message, 'error')
     },
   })
 
@@ -492,7 +509,8 @@ export const SalesOrderPage = () => {
     return Array.from(map.values())
   }, [manualAlerts, derivedAlerts])
 
-  const finalizeDisabled = createOrderMutation.isPending || Boolean(pendingOrder)
+  const finalizeDisabled =
+    createOrderMutation.isPending || Boolean(pendingOrder) || cancelPendingMutation.isPending
 
   const handleLookupCustomer = () => {
     if (!customerPhone.trim()) {
@@ -553,6 +571,14 @@ export const SalesOrderPage = () => {
     }
     setFeedback(null)
   }
+  const handleCancel = () => {
+    if (pendingOrder) {
+      cancelPendingMutation.mutate(pendingOrder.pendingId)
+      return
+    }
+    resetOrderState()
+  }
+
   const resetOrderState = () => {
     clearOrderState(true)
     setPendingOrder(null)
@@ -960,24 +986,24 @@ export const SalesOrderPage = () => {
                 variant="outlined"
                 onClick={resetOrderState}
                 startIcon={<Refresh />}
-                disabled={Boolean(pendingOrder)}
+                disabled={Boolean(pendingOrder) || cancelPendingMutation.isPending}
               >
                 New Order
               </Button>
               <Button
                 variant="text"
                 color="inherit"
-                onClick={resetOrderState}
-                disabled={Boolean(pendingOrder)}
+                onClick={handleCancel}
+                disabled={cancelPendingMutation.isPending}
               >
-                Cancel
+                {pendingOrder ? 'Cancel confirmation' : 'Cancel'}
               </Button>
               <Button
                 variant="contained"
                 color="primary"
                 startIcon={<PointOfSale />}
                 onClick={finalizeOrder}
-                disabled={finalizeDisabled}
+                disabled={finalizeDisabled || cancelPendingMutation.isPending}
               >
                 Finalize &amp; Print
               </Button>
