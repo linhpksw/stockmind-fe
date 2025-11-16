@@ -21,7 +21,7 @@ import {
   TextField,
   Typography,
 } from '@mui/material'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import {
   Fragment,
   useEffect,
@@ -31,7 +31,7 @@ import {
   type ReactElement,
   type SyntheticEvent,
 } from 'react'
-import { fetchAllInventorySummaries, syncInventory } from '../api/inventory'
+import { fetchAllInventorySummaries } from '../api/inventory'
 import { SectionHeading } from '../components/common/SectionHeading'
 import { useCategoryFilters, type ParentCategoryOption } from '../hooks/useCategoryFilters'
 import { useProductCategoryMap } from '../hooks/useProductCategoryMap'
@@ -45,6 +45,8 @@ const currencyFormatter = new Intl.NumberFormat('vi-VN', {
   currency: 'VND',
   minimumFractionDigits: 0,
 })
+
+const quantityFormatter = new Intl.NumberFormat('en-US')
 
 const BaseAutocomplete = Autocomplete as unknown as (props: Record<string, unknown>) => ReactElement
 
@@ -67,7 +69,6 @@ export const InventoryPage = () => {
   const [supplierFilter, setSupplierFilter] = useState<string[]>([])
   const [parentCategoryFilter, setParentCategoryFilter] = useState<ParentCategoryOption[]>([])
   const [childCategoryFilter, setChildCategoryFilter] = useState<CategoryOption[]>([])
-  const queryClient = useQueryClient()
 
   const summaryQuery = useQuery({
     queryKey: ['inventory-summary', 'all'],
@@ -82,14 +83,6 @@ export const InventoryPage = () => {
   } = useCategoryFilters()
   const { productCategoryMap } = useProductCategoryMap(categoryMeta)
   const { supplierOptions, isLoading: isSupplierLoading } = useSupplierOptions()
-
-  const syncMutation = useMutation({
-    mutationFn: () => syncInventory(page + 1, rowsPerPage),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['inventory-summary', 'all'] })
-      setExpanded({})
-    },
-  })
 
   const summaries = useMemo<InventoryProductSummary[]>(
     () => summaryQuery.data ?? [],
@@ -118,9 +111,19 @@ export const InventoryPage = () => {
     [childCategoryFilter],
   )
 
+  const getLatestReceivedAt = (lots: InventoryLotSummary[]): number => {
+    if (!lots || lots.length === 0) {
+      return 0
+    }
+    return Math.max(...lots.map(lot => (lot.receivedAt ? Date.parse(lot.receivedAt) : 0)))
+  }
+
   const filteredSummaries = useMemo(() => {
     const search = debouncedSearch.trim().toLowerCase()
     return summaries.filter(product => {
+      if (!product.lots || product.lots.length === 0) {
+        return false
+      }
       const meta = productCategoryMap.get(product.productId)
       const supplierName = product.supplierName ?? ''
       const matchesSupplier =
@@ -145,17 +148,32 @@ export const InventoryPage = () => {
     productCategoryMap,
   ])
 
+  const sortedSummaries = useMemo(
+    () =>
+      [...filteredSummaries].sort((a, b) => {
+        const aLatest = getLatestReceivedAt(a.lots)
+        const bLatest = getLatestReceivedAt(b.lots)
+
+        if (aLatest !== bLatest) {
+          return bLatest - aLatest
+        }
+
+        return b.productId - a.productId
+      }),
+    [filteredSummaries],
+  )
+
   const hasFilters =
     Boolean(searchFilter) ||
     supplierFilter.length > 0 ||
     parentCategoryFilter.length > 0 ||
     childCategoryFilter.length > 0
 
-  const totalFilteredSummaries = filteredSummaries.length
+  const totalFilteredSummaries = sortedSummaries.length
   const paginatedSummaries = useMemo(() => {
     const start = page * rowsPerPage
-    return filteredSummaries.slice(start, start + rowsPerPage)
-  }, [filteredSummaries, page, rowsPerPage])
+    return sortedSummaries.slice(start, start + rowsPerPage)
+  }, [sortedSummaries, page, rowsPerPage])
 
   useEffect(() => {
     const maxPage = Math.max(Math.ceil(totalFilteredSummaries / rowsPerPage) - 1, 0)
@@ -250,7 +268,9 @@ export const InventoryPage = () => {
                   <Typography variant="caption" color="text.secondary">
                     Qty on hand
                   </Typography>
-                  <Typography fontWeight={600}>{lot.qtyOnHand}</Typography>
+                  <Typography fontWeight={600}>
+                    {quantityFormatter.format(lot.qtyOnHand)}
+                  </Typography>
                 </Box>
                 <Box>
                   <Typography variant="caption" color="text.secondary">
@@ -281,16 +301,6 @@ export const InventoryPage = () => {
       <SectionHeading
         title="Inventory (lots)"
         subtitle="Review received stock grouped by product."
-        action={
-          <Stack spacing={0.5} alignItems="flex-end" textAlign="right">
-            <Button variant="contained" disabled>
-              Sync inventory
-            </Button>
-            <Typography variant="caption" color="text.secondary">
-              No new GRN receipts are waiting, so sync is temporarily paused.
-            </Typography>
-          </Stack>
-        }
       />
 
       <Paper sx={{ p: 2 }}>
@@ -397,7 +407,6 @@ export const InventoryPage = () => {
         )}
       </Paper>
 
-      {syncMutation.isError && <Alert severity="error">Unable to sync inventory snapshot.</Alert>}
       {summaryQuery.isError && <Alert severity="error">Failed to load inventory snapshot.</Alert>}
 
       <TableContainer component={Paper}>
@@ -496,7 +505,9 @@ export const InventoryPage = () => {
                         )}
                       </TableCell>
                       <TableCell align="right">
-                        <Typography fontWeight={600}>{product.onHand.toFixed(2)}</Typography>
+                        <Typography fontWeight={600}>
+                          {quantityFormatter.format(product.onHand)}
+                        </Typography>
                       </TableCell>
                     </TableRow>
                     {isExpanded && (

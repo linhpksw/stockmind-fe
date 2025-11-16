@@ -13,6 +13,16 @@ export const syncReceiving = async (pageNum: number, pageSize: number): Promise<
   return unwrapPage(data)
 }
 
+export const acceptGrn = async (poId: number): Promise<GrnSummary> => {
+  const { data } = await apiClient.post<{ data: GrnSummary }>(`/api/grns/po/${poId}/accept`)
+  return data.data
+}
+
+export const cancelGrn = async (poId: number): Promise<GrnSummary> => {
+  const { data } = await apiClient.post<{ data: GrnSummary }>(`/api/grns/po/${poId}/cancel`)
+  return data.data
+}
+
 export const fetchAllGrnSummaries = async (): Promise<GrnSummary[]> => {
   const aggregated: GrnSummary[] = []
   let pageNum = 1

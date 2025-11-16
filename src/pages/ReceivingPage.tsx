@@ -31,7 +31,7 @@ import {
   type ReactElement,
   type SyntheticEvent,
 } from 'react'
-import { fetchAllGrnSummaries, syncReceiving } from '../api/grn'
+import { acceptGrn, cancelGrn, fetchAllGrnSummaries, syncReceiving } from '../api/grn'
 import { SectionHeading } from '../components/common/SectionHeading'
 import { useCategoryFilters, type ParentCategoryOption } from '../hooks/useCategoryFilters'
 import { useProductCategoryMap } from '../hooks/useProductCategoryMap'
@@ -70,6 +70,13 @@ export const ReceivingPage = () => {
   const [statusFilter, setStatusFilter] = useState<string[]>([])
   const [parentCategoryFilter, setParentCategoryFilter] = useState<ParentCategoryOption[]>([])
   const [childCategoryFilter, setChildCategoryFilter] = useState<CategoryOption[]>([])
+  const [actionFeedback, setActionFeedback] = useState<{
+    type: 'success' | 'error'
+    message: string
+  } | null>(null)
+  const [activePo, setActivePo] = useState<{ poId: number; action: 'accept' | 'cancel' } | null>(
+    null,
+  )
   const queryClient = useQueryClient()
 
   const summaryQuery = useQuery({
@@ -96,7 +103,7 @@ export const ReceivingPage = () => {
 
   const summaries = useMemo<GrnSummary[]>(() => summaryQuery.data ?? [], [summaryQuery.data])
   const pendingCount = useMemo(
-    () => summaries.filter(summary => summary.status !== 'RECEIVED').length,
+    () => summaries.filter(summary => summary.status === 'OPEN').length,
     [summaries],
   )
   const statusOptions = useMemo(
@@ -188,6 +195,51 @@ export const ReceivingPage = () => {
     setChildCategoryFilter([])
   }
 
+  const invalidateLists = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['grn-summary', 'all'] }),
+      queryClient.invalidateQueries({ queryKey: ['purchase-orders-summary', 'all'] }),
+    ])
+  }
+
+  const acceptMutation = useMutation({
+    mutationFn: (poId: number) => acceptGrn(poId),
+    onMutate: poId => setActivePo({ poId, action: 'accept' }),
+    onSuccess: async summary => {
+      await invalidateLists()
+      setActionFeedback({
+        type: 'success',
+        message: `PO #${summary.poId} marked as received.`,
+      })
+    },
+    onError: error => {
+      setActionFeedback({
+        type: 'error',
+        message: error instanceof Error ? error.message : 'Unable to accept this PO.',
+      })
+    },
+    onSettled: () => setActivePo(null),
+  })
+
+  const cancelMutation = useMutation({
+    mutationFn: (poId: number) => cancelGrn(poId),
+    onMutate: poId => setActivePo({ poId, action: 'cancel' }),
+    onSuccess: async summary => {
+      await invalidateLists()
+      setActionFeedback({
+        type: 'success',
+        message: `PO #${summary.poId} cancelled.`,
+      })
+    },
+    onError: error => {
+      setActionFeedback({
+        type: 'error',
+        message: error instanceof Error ? error.message : 'Unable to cancel this PO.',
+      })
+    },
+    onSettled: () => setActivePo(null),
+  })
+
   useEffect(() => {
     setExpanded({})
   }, [page, rowsPerPage])
@@ -201,7 +253,8 @@ export const ReceivingPage = () => {
   }
 
   const renderItems = (grn: GrnSummary) => {
-    const isPending = grn.status !== 'RECEIVED'
+    const isPending = grn.status === 'OPEN'
+    const isCancelled = grn.status === 'CANCELLED'
 
     return (
       <Box sx={{ backgroundColor: 'grey.50', borderRadius: 2, p: 2 }}>
@@ -253,17 +306,17 @@ export const ReceivingPage = () => {
                 </Box>
                 <Box sx={{ textAlign: 'center', minWidth: 140 }}>
                   <Typography variant="caption" color="text.secondary">
-                    {isPending ? 'Expected date' : 'Expiry'}
+                    {isPending || isCancelled ? 'Expected date' : 'Expiry'}
                   </Typography>
                   <Typography fontWeight={600}>
-                    {isPending
+                    {isPending || isCancelled
                       ? formatDateTime(item.expectedDate ?? grn.receivedAt, 'dd MMM yyyy')
                       : item.expiryDate
                         ? formatDateTime(item.expiryDate, 'dd MMM yyyy')
                         : '—'}
                   </Typography>
                 </Box>
-                {!isPending && (
+                {!isPending && !isCancelled && (
                   <Box>
                     <Typography variant="caption" color="text.secondary">
                       Lot code
@@ -295,16 +348,27 @@ export const ReceivingPage = () => {
             </Button>
             {pendingCount > 0 ? (
               <Typography variant="caption" color="text.secondary">
-                {pendingCount} purchase order{pendingCount === 1 ? '' : 's'} ready to receive.
+                {pendingCount} open purchase order{pendingCount === 1 ? '' : 's'} ready to receive.
               </Typography>
             ) : (
               <Typography variant="caption" color="text.secondary">
-                All purchase orders are already received; new GRNs will appear here automatically.
+                All purchase orders are already received or closed; new GRNs will appear here
+                automatically.
               </Typography>
             )}
           </Stack>
         }
       />
+
+      {actionFeedback && (
+        <Alert
+          severity={actionFeedback.type}
+          onClose={() => setActionFeedback(null)}
+          sx={{ maxWidth: 720 }}
+        >
+          {actionFeedback.message}
+        </Alert>
+      )}
 
       <Paper sx={{ p: 2 }}>
         <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
@@ -477,10 +541,17 @@ export const ReceivingPage = () => {
                 const globalIndex = page * rowsPerPage + index + 1
                 const key = buildRowKey(grn)
                 const isExpanded = !!expanded[key]
-                const isPending = grn.status !== 'RECEIVED'
-                const itemLabel = `${grn.items.length} ${isPending ? 'item' : 'lot'}${
-                  grn.items.length === 1 ? '' : 's'
-                }`
+                const isOpen = grn.status === 'OPEN'
+                const isCancelled = grn.status === 'CANCELLED'
+                const isPending = isOpen
+                const isWorking = activePo?.poId === grn.poId
+                const statusLabel = isCancelled
+                  ? 'Cancelled'
+                  : isOpen
+                    ? 'Awaiting receipt'
+                    : 'Received'
+                const statusColor = isCancelled ? 'error' : isOpen ? 'warning' : 'success'
+                const itemLabel = `${grn.items.length} ${isPending ? 'item' : 'lot'}${grn.items.length === 1 ? '' : 's'}`
 
                 return (
                   <Fragment key={key}>
@@ -499,6 +570,9 @@ export const ReceivingPage = () => {
                           </IconButton>
                           <Box>
                             <Typography fontWeight={600}>{grn.supplierName}</Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              {itemLabel}
+                            </Typography>
                           </Box>
                         </Stack>
                       </TableCell>
@@ -511,11 +585,7 @@ export const ReceivingPage = () => {
                           rowGap={0.5}
                         >
                           <Chip size="small" label={`PO #${grn.poId}`} />
-                          <Chip
-                            size="small"
-                            label={isPending ? 'Awaiting receipt' : 'Received'}
-                            color={isPending ? 'warning' : 'success'}
-                          />
+                          <Chip size="small" label={statusLabel} color={statusColor} />
                         </Stack>
                       </TableCell>
                       <TableCell align="center">
@@ -529,7 +599,7 @@ export const ReceivingPage = () => {
                         </Typography>
                       </TableCell>
                       <TableCell>
-                        {isPending ? (
+                        {isOpen ? (
                           <Box>
                             <Typography fontWeight={600}>
                               {formatDateTime(grn.receivedAt, 'dd MMM yyyy')}
@@ -543,9 +613,49 @@ export const ReceivingPage = () => {
                         )}
                       </TableCell>
                       <TableCell align="right">
-                        <Button size="small" onClick={() => toggleRow(grn)}>
-                          {isExpanded ? 'Hide details' : `Show ${itemLabel}`}
-                        </Button>
+                        <Stack
+                          direction="row"
+                          spacing={1}
+                          justifyContent="flex-end"
+                          flexWrap="wrap"
+                        >
+                          {isOpen && (
+                            <>
+                              <Button
+                                size="small"
+                                variant="contained"
+                                onClick={() => acceptMutation.mutate(grn.poId)}
+                                disabled={
+                                  acceptMutation.isPending ||
+                                  cancelMutation.isPending ||
+                                  (isWorking && activePo?.action === 'cancel')
+                                }
+                              >
+                                {isWorking && activePo?.action === 'accept'
+                                  ? 'Accepting…'
+                                  : 'Accept'}
+                              </Button>
+                              <Button
+                                size="small"
+                                color="error"
+                                variant="outlined"
+                                onClick={() => cancelMutation.mutate(grn.poId)}
+                                disabled={
+                                  acceptMutation.isPending ||
+                                  cancelMutation.isPending ||
+                                  (isWorking && activePo?.action === 'accept')
+                                }
+                              >
+                                {isWorking && activePo?.action === 'cancel'
+                                  ? 'Cancelling…'
+                                  : 'Cancel'}
+                              </Button>
+                            </>
+                          )}
+                          <Button size="small" onClick={() => toggleRow(grn)}>
+                            {isExpanded ? 'Hide details' : 'Show details'}
+                          </Button>
+                        </Stack>
                       </TableCell>
                     </TableRow>
                     {isExpanded && (

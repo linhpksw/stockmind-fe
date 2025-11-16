@@ -226,6 +226,7 @@ export const PurchaseOrdersPage = () => {
   const [supplierFilter, setSupplierFilter] = useState<string[]>([])
   const [parentCategoryFilter, setParentCategoryFilter] = useState<ParentCategoryOption[]>([])
   const [childCategoryFilter, setChildCategoryFilter] = useState<CategoryOption[]>([])
+  const [statusFilter, setStatusFilter] = useState<string[]>([])
   const [createDialogOpen, setCreateDialogOpen] = useState(false)
   const [createForm, setCreateForm] = useState<PurchaseOrderFormState>(
     () => loadDraftFromStorage() ?? createInitialOrderState(),
@@ -731,6 +732,7 @@ export const PurchaseOrdersPage = () => {
     return summaries.filter(order => {
       const matchesSupplier =
         supplierFilter.length === 0 || supplierFilter.includes(order.supplierName)
+      const matchesStatus = statusFilter.length === 0 || statusFilter.includes(order.status)
       const matchesParent =
         selectedParentKeys.size === 0 ||
         order.items.some(item => {
@@ -747,11 +749,12 @@ export const PurchaseOrdersPage = () => {
         !search ||
         order.supplierName.toLowerCase().includes(search) ||
         order.items.some(item => item.productName.toLowerCase().includes(search))
-      return matchesSupplier && matchesSearch && matchesParent && matchesChild
+      return matchesSupplier && matchesStatus && matchesSearch && matchesParent && matchesChild
     })
   }, [
     summaries,
     supplierFilter,
+    statusFilter,
     debouncedSearch,
     selectedParentKeys,
     selectedChildKeys,
@@ -761,6 +764,7 @@ export const PurchaseOrdersPage = () => {
   const hasFilters =
     Boolean(searchFilter) ||
     supplierFilter.length > 0 ||
+    statusFilter.length > 0 ||
     parentCategoryFilter.length > 0 ||
     childCategoryFilter.length > 0
 
@@ -780,6 +784,7 @@ export const PurchaseOrdersPage = () => {
   const clearFilters = () => {
     setSearchFilter('')
     setSupplierFilter([])
+    setStatusFilter([])
     setParentCategoryFilter([])
     setChildCategoryFilter([])
   }
@@ -970,6 +975,21 @@ export const PurchaseOrdersPage = () => {
             }}
             loading={isSupplierLoading}
           />
+          <BaseAutocomplete
+            multiple
+            options={Array.from(new Set(summaries.map(order => order.status)))}
+            value={statusFilter}
+            onChange={(_event: SyntheticEvent<Element, Event>, value: string[]) =>
+              setStatusFilter(value)
+            }
+            renderInput={(params: AutocompleteRenderInputParams) => (
+              <TextField {...params} label="Status" size="small" />
+            )}
+            sx={{
+              minWidth: { xs: '100%', md: 180 },
+              flex: { xs: '1 1 100%', md: '0 1 200px' },
+            }}
+          />
         </Stack>
         {hasFilters && (
           <Stack direction="row" spacing={1} mt={2} flexWrap="wrap">
@@ -982,6 +1002,9 @@ export const PurchaseOrdersPage = () => {
             ))}
             {supplierFilter.map(name => (
               <Chip key={name} label={`Supplier · ${name}`} />
+            ))}
+            {statusFilter.map(status => (
+              <Chip key={status} label={`Status · ${status}`} />
             ))}
           </Stack>
         )}
@@ -1054,11 +1077,21 @@ export const PurchaseOrdersPage = () => {
                         </Stack>
                       </TableCell>
                       <TableCell>
-                        <Chip
-                          size="small"
-                          label={order.status}
-                          color={order.status === 'OPEN' ? 'warning' : 'success'}
-                        />
+                        {(() => {
+                          const isOpen = order.status === 'OPEN'
+                          const isReceived = order.status === 'RECEIVED'
+                          const statusLabel = isReceived
+                            ? 'Received'
+                            : isOpen
+                              ? 'Awaiting receipt'
+                              : order.status
+                          const statusColor = isOpen
+                            ? 'warning'
+                            : isReceived
+                              ? 'success'
+                              : 'default'
+                          return <Chip size="small" label={statusLabel} color={statusColor} />
+                        })()}
                       </TableCell>
                       <TableCell align="center">
                         <Typography fontWeight={700} color="primary.main">
