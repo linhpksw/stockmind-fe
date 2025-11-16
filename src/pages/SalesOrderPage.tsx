@@ -196,16 +196,19 @@ export const SalesOrderPage = () => {
     mutationFn: (payload: CreateSalesOrderRequest) => createSalesOrder(payload),
     onSuccess: async (result: CreateSalesOrderResponse) => {
       if (result.status === 'PENDING') {
+        pushManualAlert('Customer confirmation email sent. Waiting for loyalty approval.', 'info')
         setFeedback({
           type: 'info',
           message:
             'Customer confirmation email sent. Order will be finalized after the customer confirms the redemption.',
         })
       } else {
+        pushManualAlert('Sales order finalized successfully.', 'success')
         setFeedback({ type: 'success', message: 'Sales order finalized successfully.' })
       }
       await queryClient.invalidateQueries({ queryKey: ['sales-order-context'] })
-      resetOrderState()
+      await searchQuery.refetch()
+      clearOrderState(false)
     },
     onError: () => {
       pushManualAlert('Failed to finalize the sales order. Please try again.', 'error')
@@ -453,13 +456,23 @@ export const SalesOrderPage = () => {
     createOrderMutation.mutate(payload)
   }
 
-  const resetOrderState = () => {
+  const clearOrderState = (clearAlerts: boolean) => {
     setOrderLines([])
     setSelectedCustomer(null)
     setCustomerPhone('')
     setLoyaltyPointsToRedeem(0)
-    setManualAlerts([])
+    if (clearAlerts) {
+      setManualAlerts([])
+    }
     setFeedback(null)
+  }
+  const resetOrderState = () => clearOrderState(true)
+
+  const applyMaxLoyalty = () => {
+    if (!selectedCustomer || orderTotals.loyaltyEligible <= 0) {
+      return
+    }
+    setLoyaltyPointsToRedeem(orderTotals.loyaltyEligible)
   }
 
   const clearFilters = () => {
@@ -723,7 +736,7 @@ export const SalesOrderPage = () => {
                           </Typography>
                         </TableCell>
                         <TableCell>{line.uom}</TableCell>
-                        <TableCell sx={{ maxWidth: 160 }}>
+                        <TableCell sx={{ minWidth: 140 }}>
                           <TextField
                             size="small"
                             type="number"
@@ -733,7 +746,9 @@ export const SalesOrderPage = () => {
                               min: 0,
                               max: line.qtyOnHand,
                               step: line.uom.toUpperCase() === 'KG' ? 0.1 : 1,
+                              style: { textAlign: 'right' },
                             }}
+                            fullWidth
                           />
                         </TableCell>
                         <TableCell>{formatCurrency(line.unitPrice)}</TableCell>
@@ -828,6 +843,14 @@ export const SalesOrderPage = () => {
                     disabled={!selectedCustomer}
                     helperText={`Max allowed now: ${orderTotals.loyaltyEligible.toLocaleString()} pts`}
                   />
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    onClick={applyMaxLoyalty}
+                    disabled={!selectedCustomer || orderTotals.loyaltyEligible === 0}
+                  >
+                    Use max ({orderTotals.loyaltyEligible.toLocaleString()} pts)
+                  </Button>
                 </Stack>
               </Paper>
             </Stack>
