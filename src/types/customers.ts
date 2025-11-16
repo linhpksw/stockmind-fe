@@ -8,6 +8,7 @@ export interface Customer {
   loyaltyCode?: string | null
   loyaltyPoints: number
   createdAt: string
+  isUpdated?: boolean
 }
 
 export interface CreateCustomerRequest {

@@ -31,10 +31,16 @@ import {
   Typography,
   type AlertColor,
 } from '@mui/material'
+import { isAxiosError } from 'axios'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react'
 import { createCustomer, lookupCustomerByPhone } from '../api/customers'
-import { createSalesOrder, fetchSalesOrderContext, searchSellableLots } from '../api/salesOrders'
+import {
+  createSalesOrder,
+  fetchSalesOrderContext,
+  getPendingSalesOrderStatus,
+  searchSellableLots,
+} from '../api/salesOrders'
 import { SectionHeading } from '../components/common/SectionHeading'
 import { useCategoryFilters } from '../hooks/useCategoryFilters'
 import { useSupplierOptions } from '../hooks/useSupplierOptions'
@@ -45,6 +51,7 @@ import type {
   CreateSalesOrderLineInput,
   CreateSalesOrderRequest,
   CreateSalesOrderResponse,
+  PendingSalesOrder,
   SellableLot,
   SellableLotQuery,
 } from '../types/salesOrders'
@@ -57,6 +64,19 @@ const currencyFormatter = new Intl.NumberFormat('vi-VN', {
 })
 
 const formatCurrency = (value: number): string => currencyFormatter.format(value || 0)
+
+interface ApiErrorResponse {
+  code?: string
+  message?: string
+  errors?: string[]
+}
+
+const extractApiErrorMessage = (error: unknown, fallback: string): string => {
+  if (isAxiosError<ApiErrorResponse>(error)) {
+    return error.response?.data?.message ?? fallback
+  }
+  return fallback
+}
 
 const useDebouncedValue = <T,>(value: T, delay = 300): T => {
   const [debounced, setDebounced] = useState(value)
@@ -120,6 +140,19 @@ export const SalesOrderPage = () => {
   const [customerDialogOpen, setCustomerDialogOpen] = useState(false)
   const [customerForm, setCustomerForm] = useState<CustomerFormState>(defaultCustomerForm)
   const [feedback, setFeedback] = useState<{ type: AlertColor; message: string } | null>(null)
+  const [pendingOrder, setPendingOrder] = useState<PendingSalesOrder | null>(null)
+
+  const pushManualAlert = useCallback((text: string, severity: AlertColor = 'warning') => {
+    setManualAlerts(prev => [
+      ...prev,
+      {
+        id: `${Date.now()}-${Math.random()}`,
+        text,
+        severity,
+        source: 'manual',
+      },
+    ])
+  }, [])
 
   const { parentCategoryOptions, childCategoryLookup, childCategoryOptions } = useCategoryFilters()
   const { suppliers } = useSupplierOptions()
@@ -158,6 +191,7 @@ export const SalesOrderPage = () => {
       return searchSellableLots(params)
     },
   })
+  const refetchSellableLots = searchQuery.refetch
 
   const lookupCustomerMutation = useMutation({
     mutationFn: lookupCustomerByPhone,
@@ -185,10 +219,18 @@ export const SalesOrderPage = () => {
       setCustomerPhone(result.phoneNumber)
       setLoyaltyPointsToRedeem(0)
       setCustomerDialogOpen(false)
-      setFeedback({ type: 'success', message: 'Loyalty customer created successfully.' })
+      const message = result.isUpdated
+        ? 'Existing loyalty customer updated from phone number.'
+        : 'Loyalty customer created successfully.'
+      pushManualAlert(message, 'success')
+      setFeedback({ type: 'success', message })
     },
-    onError: () => {
-      pushManualAlert('Unable to create customer. Please check the form and try again.', 'error')
+    onError: error => {
+      const message = extractApiErrorMessage(
+        error,
+        'Unable to create customer. Please check the form and try again.',
+      )
+      pushManualAlert(message, 'error')
     },
   })
 
@@ -196,19 +238,24 @@ export const SalesOrderPage = () => {
     mutationFn: (payload: CreateSalesOrderRequest) => createSalesOrder(payload),
     onSuccess: async (result: CreateSalesOrderResponse) => {
       if (result.status === 'PENDING') {
-        pushManualAlert('Customer confirmation email sent. Waiting for loyalty approval.', 'info')
+        pushManualAlert('Customer confirmation email sent. Waiting for approval.', 'info')
         setFeedback({
           type: 'info',
           message:
             'Customer confirmation email sent. Order will be finalized after the customer confirms the redemption.',
         })
-      } else {
-        pushManualAlert('Sales order finalized successfully.', 'success')
-        setFeedback({ type: 'success', message: 'Sales order finalized successfully.' })
+        if (result.pending) {
+          setPendingOrder(result.pending)
+        }
+        await queryClient.invalidateQueries({ queryKey: ['sales-order-context'] })
+        return
       }
       await queryClient.invalidateQueries({ queryKey: ['sales-order-context'] })
-      await searchQuery.refetch()
+      await refetchSellableLots()
+      pushManualAlert('Sales order finalized successfully.', 'success')
+      setFeedback({ type: 'success', message: 'Sales order finalized successfully.' })
       clearOrderState(false)
+      setPendingOrder(null)
     },
     onError: () => {
       pushManualAlert('Failed to finalize the sales order. Please try again.', 'error')
@@ -219,17 +266,51 @@ export const SalesOrderPage = () => {
     searchInputRef.current?.focus()
   }, [])
 
-  const pushManualAlert = (text: string, severity: AlertColor = 'warning') => {
-    setManualAlerts(prev => [
-      ...prev,
-      {
-        id: `${Date.now()}-${Math.random()}`,
-        text,
-        severity,
-        source: 'manual',
-      },
-    ])
-  }
+  useEffect(() => {
+    if (!pendingOrder) {
+      return
+    }
+
+    let cancelled = false
+    const checkStatus = async () => {
+      try {
+        const status = await getPendingSalesOrderStatus(pendingOrder.pendingId)
+        if (cancelled) {
+          return
+        }
+        const normalizedStatus = status.status?.toUpperCase()
+        if (status.isConfirmed) {
+          pushManualAlert('Customer confirmed the order.', 'success')
+          setFeedback({ type: 'success', message: 'Customer confirmed the order.' })
+          await refetchSellableLots()
+          await queryClient.invalidateQueries({ queryKey: ['sales-order-context'] })
+          clearOrderState(false)
+          setPendingOrder(null)
+        } else if (normalizedStatus === 'EXPIRED' || normalizedStatus === 'CANCELLED') {
+          const message =
+            normalizedStatus === 'EXPIRED'
+              ? 'Customer confirmation expired. Please finalize again.'
+              : 'Customer cancelled this order. Please finalize again.'
+          pushManualAlert(message, 'warning')
+          setPendingOrder(null)
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.error('Failed to check pending order status', error)
+        }
+      }
+    }
+
+    const interval = setInterval(() => {
+      void checkStatus()
+    }, 5000)
+    void checkStatus()
+
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
+  }, [pendingOrder, pushManualAlert, queryClient, refetchSellableLots])
 
   const removeManualAlert = (id: string) => {
     setManualAlerts(prev => prev.filter(alert => alert.id !== id))
@@ -411,6 +492,8 @@ export const SalesOrderPage = () => {
     return Array.from(map.values())
   }, [manualAlerts, derivedAlerts])
 
+  const finalizeDisabled = createOrderMutation.isPending || Boolean(pendingOrder)
+
   const handleLookupCustomer = () => {
     if (!customerPhone.trim()) {
       pushManualAlert('Enter a phone number before searching.', 'info')
@@ -433,6 +516,10 @@ export const SalesOrderPage = () => {
   }
 
   const finalizeOrder = () => {
+    if (pendingOrder) {
+      pushManualAlert('Waiting for customer confirmation before finalizing another order.', 'info')
+      return
+    }
     if (orderLines.length === 0) {
       pushManualAlert('Add at least one product to the order before finalizing.', 'error')
       return
@@ -466,7 +553,10 @@ export const SalesOrderPage = () => {
     }
     setFeedback(null)
   }
-  const resetOrderState = () => clearOrderState(true)
+  const resetOrderState = () => {
+    clearOrderState(true)
+    setPendingOrder(null)
+  }
 
   const applyMaxLoyalty = () => {
     if (!selectedCustomer || orderTotals.loyaltyEligible <= 0) {
@@ -817,6 +907,12 @@ export const SalesOrderPage = () => {
                   <Typography variant="body2" color="text.secondary">
                     Points earned: <strong>{orderTotals.pointsEarned}</strong>
                   </Typography>
+                  {pendingOrder && (
+                    <Alert severity="info">
+                      Waiting for customer confirmation sent to{' '}
+                      {pendingOrder.customerEmail ?? 'the customer'}.
+                    </Alert>
+                  )}
                 </Stack>
               </Paper>
               <Paper sx={{ p: 2, minWidth: 280 }}>
@@ -860,10 +956,20 @@ export const SalesOrderPage = () => {
               justifyContent="flex-end"
               mt={3}
             >
-              <Button variant="outlined" onClick={resetOrderState} startIcon={<Refresh />}>
+              <Button
+                variant="outlined"
+                onClick={resetOrderState}
+                startIcon={<Refresh />}
+                disabled={Boolean(pendingOrder)}
+              >
                 New Order
               </Button>
-              <Button variant="text" color="inherit" onClick={resetOrderState}>
+              <Button
+                variant="text"
+                color="inherit"
+                onClick={resetOrderState}
+                disabled={Boolean(pendingOrder)}
+              >
                 Cancel
               </Button>
               <Button
@@ -871,7 +977,7 @@ export const SalesOrderPage = () => {
                 color="primary"
                 startIcon={<PointOfSale />}
                 onClick={finalizeOrder}
-                disabled={createOrderMutation.isPending}
+                disabled={finalizeDisabled}
               >
                 Finalize &amp; Print
               </Button>
