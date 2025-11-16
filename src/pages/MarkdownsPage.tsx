@@ -149,6 +149,8 @@ const listPriceTooltip =
   'List price is the base selling price before markdowns. Estimate it by dividing the unit cost by (1 − target margin %).'
 const floorPriceTooltip =
   'Floor price is the minimum guardrail derived from cost: floor price = unit cost ÷ (1 − floor % of cost).'
+const suggestedDiscountTooltip =
+  'Profit/Loss vs floor uses the discount price (list price × (1 − discount %)) compared to the floor price: (discount price − floor price) × quantity.'
 
 export const MarkdownsPage = () => {
   const [activeTab, setActiveTab] = useState(0)
@@ -950,7 +952,17 @@ export const MarkdownsPage = () => {
                     </TableCell>
                     <TableCell>Lot received at</TableCell>
                     <TableCell>Days to expiry</TableCell>
-                    <TableCell>Suggested discount</TableCell>
+                    <TableCell>
+                      <Stack direction="row" spacing={0.5} alignItems="center">
+                        <Box component="span">Suggested discount</Box>
+                        <Tooltip title={suggestedDiscountTooltip} arrow placement="top">
+                          <InfoOutlinedIcon
+                            fontSize="small"
+                            sx={{ color: 'text.secondary', cursor: 'help' }}
+                          />
+                        </Tooltip>
+                      </Stack>
+                    </TableCell>
                     <TableCell align="right">
                       <Stack
                         direction="row"
@@ -1031,13 +1043,13 @@ export const MarkdownsPage = () => {
                           : 'At floor'
                     const profitValue =
                       Number.isFinite(profitDelta) && profitDelta !== 0
-                        ? profitFormatter.format(Math.abs(profitDelta))
-                        : '0'
+                        ? currencyFormatter.format(Math.abs(profitDelta))
+                        : currencyFormatter.format(0)
                     const quantityLabel =
                       quantity > 0 ? ` (Qty ${profitFormatter.format(quantity)})` : ''
                     const marginText =
                       actualMarginRatio !== null
-                        ? `Actual margin: ${discountPrice.toFixed(2)} (${(actualMarginRatio * 100).toFixed(1)}%)`
+                        ? `Actual margin: ${currencyFormatter.format(actualMarginRatio * discountPrice * quantity)} (${(actualMarginRatio * 100).toFixed(1)}%)`
                         : 'Margin unavailable'
                     const isDecisionApplied = Boolean(
                       item.lotSaleDecisionId && item.lotSaleDecisionApplied,
