@@ -1,6 +1,10 @@
 import { apiClient } from './client'
+import type { ApiResponse } from '../types/common'
 import type {
   MarkdownApplyApiResponse,
+  MarkdownApplyBulkApiResponse,
+  MarkdownApplyBulkRequest,
+  MarkdownApplyBulkResponse,
   MarkdownApplyRequest,
   MarkdownApplyResponse,
   MarkdownRecommendation,
@@ -29,6 +33,16 @@ export const applyMarkdown = async (
   return unwrap(data)
 }
 
+export const applyAllMarkdowns = async (
+  payload: MarkdownApplyBulkRequest,
+): Promise<MarkdownApplyBulkResponse> => {
+  const { data } = await apiClient.post<MarkdownApplyBulkApiResponse>(
+    '/markdowns/apply/bulk',
+    payload,
+  )
+  return unwrap(data)
+}
+
 export const listMarkdownRules = async (): Promise<MarkdownRule[]> => {
   const { data } = await apiClient.get<MarkdownRulesResponse>('/markdowns/rules')
   return unwrap(data)
@@ -54,5 +68,12 @@ export const updateMarkdownRule = async (
 
 export const deleteMarkdownRule = async (ruleId: number): Promise<MarkdownRule> => {
   const { data } = await apiClient.delete<MarkdownRuleApiResponse>(`/markdowns/rules/${ruleId}`)
+  return unwrap(data)
+}
+
+export const revertLotSaleDecision = async (decisionId: number): Promise<boolean> => {
+  const { data } = await apiClient.post<ApiResponse<boolean>>(
+    `/markdowns/decisions/${decisionId}/revert`,
+  )
   return unwrap(data)
 }

@@ -16,6 +16,7 @@ import {
   DialogTitle,
   IconButton,
   Paper,
+  Snackbar,
   Stack,
   Table,
   TableBody,
@@ -34,6 +35,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   useTransition,
   type ChangeEvent,
@@ -52,6 +54,7 @@ import { useCategoryFilters, type ParentCategoryOption } from '../hooks/useCateg
 import { useProductCategoryMap } from '../hooks/useProductCategoryMap'
 import { useSupplierOptions } from '../hooks/useSupplierOptions'
 import type { CategoryOption } from '../utils/categories'
+import { consumeReplenishmentPrefill } from '../utils/replenishmentPrefill'
 import type {
   CreatePurchaseOrderItemRequest,
   CreatePurchaseOrderRequest,
@@ -118,6 +121,11 @@ const createSupplierOrder = (): SupplierOrderForm => ({
 const createInitialOrderState = (): PurchaseOrderFormState => ({
   orders: [createSupplierOrder()],
 })
+
+type ReplenishmentPrefill = {
+  productId: string
+  suggestedQty: number
+}
 
 const PO_CREATE_DRAFT_STORAGE_KEY = 'po-create-draft'
 
@@ -223,8 +231,12 @@ export const PurchaseOrdersPage = () => {
     () => loadDraftFromStorage() ?? createInitialOrderState(),
   )
   const [createFormError, setCreateFormError] = useState<string | null>(null)
+  const [pendingReplenishmentPrefill, setPendingReplenishmentPrefill] =
+    useState<ReplenishmentPrefill | null>(null)
+  const [missingSupplierWarning, setMissingSupplierWarning] = useState<string | null>(null)
   const [, startCreateFormTransition] = useTransition()
   const queryClient = useQueryClient()
+  const replenishmentPrefillConsumedRef = useRef(false)
 
   const resetCreateForm = () => {
     setCreateForm(createInitialOrderState())
@@ -268,6 +280,11 @@ export const PurchaseOrdersPage = () => {
   } = useCategoryFilters()
   const { productCategoryMap } = useProductCategoryMap(categoryMeta)
   const { supplierOptions, suppliers, isLoading: isSupplierLoading } = useSupplierOptions()
+  const supplierLookup = useMemo(() => {
+    const map = new Map<string, Supplier>()
+    suppliers.forEach(supplier => map.set(supplier.id, supplier))
+    return map
+  }, [suppliers])
   const productsQuery = useQuery({
     queryKey: ['products-directory'],
     queryFn: listProducts,
@@ -319,13 +336,13 @@ export const PurchaseOrdersPage = () => {
     [marginLookup, resolveParentKey],
   )
 
-  const getDefaultExpectedDate = (leadTimeDays?: number) => {
+  const getDefaultExpectedDate = useCallback((leadTimeDays?: number) => {
     const offset = Number.isFinite(leadTimeDays) ? (leadTimeDays ?? 0) : 0
     const date = new Date()
     date.setHours(0, 0, 0, 0)
     date.setDate(date.getDate() + offset)
     return date.toISOString().slice(0, 10)
-  }
+  }, [])
 
   const syncMutation = useMutation({
     mutationFn: () => syncPurchaseOrders(page + 1, rowsPerPage),
@@ -358,6 +375,105 @@ export const PurchaseOrdersPage = () => {
     map.forEach(list => list.sort((a, b) => a.name.localeCompare(b.name)))
     return map
   }, [products])
+  useEffect(() => {
+    if (!pendingReplenishmentPrefill || !createDialogOpen) {
+      return
+    }
+    if (products.length === 0) {
+      return
+    }
+
+    const product = products.find(item => String(item.id) === pendingReplenishmentPrefill.productId)
+    if (!product) {
+      return
+    }
+
+    if (!product.supplierId) {
+      setMissingSupplierWarning(
+        `${product.name ?? 'This product'} does not have a supplier assigned yet. Please set a supplier before creating a purchase order.`,
+      )
+      setPendingReplenishmentPrefill(null)
+      return
+    }
+
+    const supplierId = product.supplierId
+    const supplierLeadTime = supplierId ? supplierLookup.get(supplierId)?.leadTimeDays : undefined
+    const expectedDate = getDefaultExpectedDate(supplierLeadTime)
+    const normalizedQty =
+      pendingReplenishmentPrefill.suggestedQty > 0
+        ? Math.max(1, Math.ceil(pendingReplenishmentPrefill.suggestedQty))
+        : 0
+
+    scheduleFormUpdate(prev => {
+      const orders =
+        prev.orders.length > 0
+          ? prev.orders.map(order => ({
+              ...order,
+              items: order.items.map(item => ({ ...item })),
+            }))
+          : []
+
+      let targetIndex =
+        supplierId && supplierId.length > 0
+          ? orders.findIndex(order => order.supplierId === supplierId)
+          : -1
+
+      if (targetIndex === -1) {
+        const newOrder = createSupplierOrder()
+        newOrder.supplierId = supplierId
+        newOrder.items = [{ ...createEmptyOrderItem(), expectedDate }]
+        orders.unshift(newOrder)
+        targetIndex = 0
+      }
+
+      const targetOrder = orders[targetIndex]
+      const items =
+        targetOrder.items.length > 0
+          ? targetOrder.items.slice()
+          : [{ ...createEmptyOrderItem(), expectedDate }]
+      const existingProductIndex = items.findIndex(
+        item => item.productId && String(item.productId) === String(product.id),
+      )
+      const emptySlotIndex = items.findIndex(
+        item => !item.productId || String(item.productId).trim().length === 0,
+      )
+      let targetItemIndex = existingProductIndex
+      if (targetItemIndex === -1) {
+        targetItemIndex = emptySlotIndex
+      }
+      if (targetItemIndex === -1) {
+        items.push({ ...createEmptyOrderItem(), expectedDate })
+        targetItemIndex = items.length - 1
+      }
+      const qtyValue = normalizedQty > 0 ? String(normalizedQty) : ''
+      items[targetItemIndex] = {
+        ...items[targetItemIndex],
+        productId: String(product.id),
+        qty: qtyValue,
+        unitCost: computeSuggestedUnitCost(product),
+        expectedDate,
+      }
+
+      orders[targetIndex] = {
+        ...targetOrder,
+        supplierId,
+        items,
+      }
+
+      return { orders }
+    })
+
+    setPendingReplenishmentPrefill(null)
+    setCreateFormError(null)
+  }, [
+    pendingReplenishmentPrefill,
+    createDialogOpen,
+    products,
+    supplierLookup,
+    scheduleFormUpdate,
+    computeSuggestedUnitCost,
+    getDefaultExpectedDate,
+  ])
   const getProductsForSupplier = useCallback(
     (supplierId: string) => {
       if (!supplierId) {
@@ -380,11 +496,11 @@ export const PurchaseOrdersPage = () => {
       setCreateDialogOpen(false)
     },
   })
-  const openCreateDialog = () => {
+  const openCreateDialog = useCallback(() => {
     setCreateDialogOpen(true)
     createPoMutation.reset()
     setCreateFormError(null)
-  }
+  }, [createPoMutation])
 
   const closeCreateDialog = () => {
     if (createPoMutation.isPending) {
@@ -394,6 +510,24 @@ export const PurchaseOrdersPage = () => {
     setCreateFormError(null)
     createPoMutation.reset()
   }
+
+  useEffect(() => {
+    if (replenishmentPrefillConsumedRef.current) {
+      return
+    }
+    const stored = consumeReplenishmentPrefill()
+    replenishmentPrefillConsumedRef.current = true
+    if (!stored) {
+      return
+    }
+    setPendingReplenishmentPrefill({
+      productId: String(stored.productId),
+      suggestedQty: stored.suggestedQty,
+    })
+    if (!createDialogOpen) {
+      openCreateDialog()
+    }
+  }, [createDialogOpen, openCreateDialog])
 
   const handleSupplierChange = (
     orderIndex: number,
@@ -979,6 +1113,7 @@ export const PurchaseOrdersPage = () => {
         maxWidth="md"
       >
         <DialogTitle
+          component="div"
           sx={{
             display: 'flex',
             alignItems: 'center',
@@ -987,7 +1122,9 @@ export const PurchaseOrdersPage = () => {
             gap: 2,
           }}
         >
-          <Typography variant="h6">Create purchase order</Typography>
+          <Typography component="h2" variant="h6">
+            Create purchase order
+          </Typography>
           <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
             <Chip label="Draft autosaved" color="info" size="small" variant="outlined" />
             <Button
@@ -1341,6 +1478,20 @@ export const PurchaseOrdersPage = () => {
           </Stack>
         </DialogActions>
       </Dialog>
+      <Snackbar
+        open={Boolean(missingSupplierWarning)}
+        autoHideDuration={5000}
+        onClose={() => setMissingSupplierWarning(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert
+          severity="warning"
+          onClose={() => setMissingSupplierWarning(null)}
+          sx={{ width: '100%' }}
+        >
+          {missingSupplierWarning}
+        </Alert>
+      </Snackbar>
     </Stack>
   )
 }
