@@ -173,32 +173,21 @@ export const DashboardPage = () => {
 
   return (
     <Stack spacing={4}>
-      <SectionHeading
-        title="Inventory Pulse"
-        subtitle="Stay ahead of low stock, expiry risk, and slow movers."
-      />
+      <SectionHeading title="Inventory Pulse" subtitle="Stay ahead of low stock and expiry risk." />
       <Grid container spacing={3}>
-        <Grid item xs={12} md={4}>
+        <Grid item xs={12} md={6}>
           <StatCard
             label="Low stock SKUs"
             value={alerts?.lowStock.length ?? 0}
             helperText="Below min stock."
           />
         </Grid>
-        <Grid item xs={12} md={4}>
+        <Grid item xs={12} md={6}>
           <StatCard
             label="Lots expiring soon"
             value={alerts?.expirySoon.length ?? 0}
             helperText="Within configured window."
             accent="secondary"
-          />
-        </Grid>
-        <Grid item xs={12} md={4}>
-          <StatCard
-            label="Slow movers"
-            value={alerts?.slowMovers.length ?? 0}
-            helperText="Need attention."
-            accent="error"
           />
         </Grid>
       </Grid>

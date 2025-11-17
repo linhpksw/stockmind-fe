@@ -1073,7 +1073,7 @@ export const ProductManagementPage = () => {
                 <TableCell>SKU code</TableCell>
                 <TableCell>Name</TableCell>
                 <TableCell>UoM</TableCell>
-                <TableCell>Price</TableCell>
+                <TableCell sx={{ display: 'none' }}>Price</TableCell>
                 <TableCell>Category</TableCell>
                 <TableCell>Brand</TableCell>
                 <TableCell align="right">Actions</TableCell>
@@ -1154,7 +1154,9 @@ export const ProductManagementPage = () => {
                       </Stack>
                     </TableCell>
                     <TableCell>{product.uom}</TableCell>
-                    <TableCell>{currencyFormatter.format(product.price)}</TableCell>
+                    <TableCell sx={{ display: 'none' }}>
+                      {currencyFormatter.format(product.price)}
+                    </TableCell>
                     <TableCell>{getCategoryLabel(product)}</TableCell>
                     <TableCell>{getBrandLabel(product)}</TableCell>
                     <TableCell align="right">
@@ -1589,7 +1591,7 @@ export const ProductManagementPage = () => {
                           : 'Unassigned'}
                       </Typography>
                     </Grid>
-                    <Grid item xs={12} sm={6}>
+                    <Grid item xs={12} sm={6} sx={{ display: 'none' }}>
                       <Typography variant="body2" color="text.secondary">
                         Price
                       </Typography>
