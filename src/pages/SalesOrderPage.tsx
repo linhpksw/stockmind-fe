@@ -142,6 +142,12 @@ export const SalesOrderPage = () => {
   const [customerForm, setCustomerForm] = useState<CustomerFormState>(defaultCustomerForm)
   const [feedback, setFeedback] = useState<{ type: AlertColor; message: string } | null>(null)
   const [pendingOrder, setPendingOrder] = useState<PendingSalesOrder | null>(null)
+  const [customerFormError, setCustomerFormError] = useState<string | null>(null)
+
+  const closeCustomerDialog = () => {
+    setCustomerDialogOpen(false)
+    setCustomerFormError(null)
+  }
 
   const pushManualAlert = useCallback((text: string, severity: AlertColor = 'warning') => {
     setManualAlerts(prev => [
@@ -219,7 +225,7 @@ export const SalesOrderPage = () => {
       setCustomerForm(defaultCustomerForm)
       setCustomerPhone(result.phoneNumber)
       setLoyaltyPointsToRedeem(0)
-      setCustomerDialogOpen(false)
+      closeCustomerDialog()
       const message = result.isUpdated
         ? 'Existing loyalty customer updated from phone number.'
         : 'Loyalty customer created successfully.'
@@ -231,7 +237,7 @@ export const SalesOrderPage = () => {
         error,
         'Unable to create customer. Please check the form and try again.',
       )
-      pushManualAlert(message, 'error')
+      setCustomerFormError(message)
     },
   })
 
@@ -665,7 +671,10 @@ export const SalesOrderPage = () => {
                 variant="contained"
                 color="secondary"
                 startIcon={<PersonAddAlt1 />}
-                onClick={() => setCustomerDialogOpen(true)}
+                onClick={() => {
+                  setCustomerFormError(null)
+                  setCustomerDialogOpen(true)
+                }}
               >
                 Assign loyalty card
               </Button>
@@ -1012,15 +1021,15 @@ export const SalesOrderPage = () => {
         </Grid>
       </Grid>
 
-      <Dialog
-        open={customerDialogOpen}
-        onClose={() => setCustomerDialogOpen(false)}
-        maxWidth="sm"
-        fullWidth
-      >
+      <Dialog open={customerDialogOpen} onClose={closeCustomerDialog} maxWidth="sm" fullWidth>
         <DialogTitle>Assign loyalty card</DialogTitle>
         <DialogContent dividers>
           <Stack spacing={2} mt={1}>
+            {customerFormError && (
+              <Alert severity="error" onClose={() => setCustomerFormError(null)}>
+                {customerFormError}
+              </Alert>
+            )}
             <TextField
               label="Full name"
               value={customerForm.fullName}
@@ -1051,7 +1060,7 @@ export const SalesOrderPage = () => {
           </Stack>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setCustomerDialogOpen(false)}>Close</Button>
+          <Button onClick={closeCustomerDialog}>Close</Button>
           <Button
             variant="contained"
             onClick={handleCreateCustomer}
